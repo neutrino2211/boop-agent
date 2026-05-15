@@ -5,8 +5,8 @@ services:
       dockerfile: Dockerfile
     container_name: boop-agent
     restart: unless-stopped
-    env_file:
-      - .env.local
+    # Environment variables are expected to be injected by the deployment
+    # platform (e.g. Dokploy), not from a checked-in local env file.
     ports:
       - "3456:3456"
     healthcheck:
