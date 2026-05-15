@@ -1,7 +1,8 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query } from "./agent-sdk.js";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { broadcast } from "./broadcast.js";
+import { normalizeModelOrDefault } from "./model-config.js";
 import { aggregateUsageFromResult, EMPTY_USAGE, type UsageTotals } from "./usage.js";
 
 function randomId(prefix: string): string {
@@ -97,8 +98,8 @@ interface Challenge {
   severity: "low" | "medium" | "high";
 }
 
-const ADVERSARY_MODEL = process.env.BOOP_ADVERSARY_MODEL ?? "claude-haiku-4-5";
-const DEFAULT_MODEL = process.env.BOOP_MODEL ?? "claude-sonnet-4-6";
+const ADVERSARY_MODEL = normalizeModelOrDefault(process.env.BOOP_ADVERSARY_MODEL ?? "claude-haiku-4-5");
+const DEFAULT_MODEL = normalizeModelOrDefault(process.env.BOOP_MODEL);
 
 interface Decision {
   proposalIndex: number;

@@ -1,4 +1,4 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query } from "./agent-sdk.js";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { broadcast } from "./broadcast.js";
@@ -147,8 +147,7 @@ export async function spawnExecutionAgent(opts: SpawnOptions): Promise<SpawnResu
         model: requestedModel,
         mcpServers,
         allowedTools,
-        // Load .claude/skills/ so the model can invoke SKILL.md playbooks. Without
-        // this the SDK runs in isolation mode and skills are silently ignored.
+        // Skill loading is enabled via the "Skill" tool in allowedTools.
         settingSources: ["project"],
         permissionMode: "bypassPermissions",
         abortController: abort,

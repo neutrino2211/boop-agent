@@ -1,4 +1,4 @@
-import type { McpSdkServerConfigWithInstance } from "@anthropic-ai/claude-agent-sdk";
+import type { McpSdkServerConfigWithInstance } from "../agent-sdk.js";
 
 export interface IntegrationModule {
   name: string;

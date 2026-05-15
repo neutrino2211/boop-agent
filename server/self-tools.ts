@@ -1,4 +1,4 @@
-import { tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
+import { tool, createSdkMcpServer } from "./agent-sdk.js";
 import { z } from "zod";
 import {
   CURATED_TOOLKITS,
@@ -9,12 +9,14 @@ import {
 import { availableIntegrations } from "./execution-agent.js";
 import { activeProvider as activeEmbeddingProvider } from "./embeddings.js";
 import {
+  DEFAULT_MODEL,
   KNOWN_MODELS,
   MODEL_ALIASES,
   getRuntimeModel,
   resolveModelInput,
   setRuntimeModel,
 } from "./runtime-config.js";
+import { normalizeModelOrDefault } from "./model-config.js";
 import {
   describeUserNow,
   getStoredUserTimezone,
@@ -29,14 +31,14 @@ export function createSelfMcp() {
     tools: [
       tool(
         "get_config",
-        "Return Boop's runtime configuration: which Claude model it's using, the user's timezone, the current local time, which integrations are loaded, and basic env info. Use when the user asks 'what model are you?', 'what time is it?', 'what timezone am I in?', or anything about the agent itself.",
+        "Return Boop's runtime configuration: which model/provider it's using, the user's timezone, the current local time, which integrations are loaded, and basic env info. Use when the user asks 'what model are you?', 'what time is it?', 'what timezone am I in?', or anything about the agent itself.",
         {},
         async () => {
           const integrations = availableIntegrations();
           const tzInfo = await describeUserNow();
           const config = {
             model: await getRuntimeModel(),
-            envDefault: process.env.BOOP_MODEL ?? "claude-sonnet-4-6",
+            envDefault: normalizeModelOrDefault(process.env.BOOP_MODEL ?? DEFAULT_MODEL),
             availableModels: [...KNOWN_MODELS],
             userTimezone: tzInfo.isExplicit ? tzInfo.timezone : null,
             timezoneFallback: tzInfo.isExplicit ? null : tzInfo.timezone,
@@ -94,18 +96,18 @@ Use when the user tells you their timezone or location ("I'm in Dallas", "use ce
       ),
       tool(
         "set_model",
-        `Switch the Claude model used for both this dispatcher and any sub-agents. The change applies to the *next* turn (this turn finishes on the current model). Accepts either a canonical ID or a friendly alias.
+        `Switch the model used for both this dispatcher and any sub-agents. The change applies to the *next* turn (this turn finishes on the current model). Accepts either a canonical ID or a friendly alias.
 
 Aliases: ${Object.keys(MODEL_ALIASES).map((k) => `"${k}"`).join(", ")}
 Canonical: ${[...KNOWN_MODELS].map((k) => `"${k}"`).join(", ")}
 
-Use when the user says "use opus", "switch to sonnet", "make it faster (haiku)", etc.
-
-Cost note (approximate, per 1M output tokens): Opus 4.7 ≈ $75, Sonnet 4.6 ≈ $15, Haiku 4.5 ≈ $4. Mention briefly when switching to Opus.`,
+Use when the user says "use opus", "switch to sonnet", "make it faster (haiku)", "use OpenRouter", or "use Azure".`,
         {
           model: z
             .string()
-            .describe('Model to use. Canonical ID like "claude-opus-4-7" or alias like "opus".'),
+            .describe(
+              'Model to use. Canonical ID like "anthropic/claude-opus-4-7", "openrouter/anthropic/claude-sonnet-4.5", "azure-openai-responses/gpt-5-mini", or alias like "opus"/"gpt-5".',
+            ),
         },
         async ({ model }) => {
           const resolved = resolveModelInput(model);

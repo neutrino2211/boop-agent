@@ -1,4 +1,4 @@
-import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKMessage } from "./agent-sdk.js";
 
 export interface UsageTotals {
   /** Name of the model that consumed the most tokens. */
@@ -20,19 +20,8 @@ export const EMPTY_USAGE: UsageTotals = {
 };
 
 /**
- * The SDK's result message has two cost-y fields:
- *   - msg.usage      → raw Anthropic usage for the FINAL turn only (snake_case)
- *   - msg.modelUsage → aggregate per-model across the whole query (camelCase)
- *
- * Always prefer modelUsage — msg.usage massively undercounts on tool-heavy runs.
- *
- * Note on the `model` field returned: msg.modelUsage can contain MULTIPLE models
- * per query because Claude Code CLI uses different models for different internal
- * sub-tasks within a single query() call (e.g. haiku for cheap routing + sonnet
- * for the main response). If you pass `requestedModel`, it's used as the reported
- * primary so the cost row reflects what the caller actually asked for. Otherwise
- * we fall back to whichever model consumed the most tokens — accurate by volume
- * but often misleading.
+ * The query() compatibility layer reports aggregate usage in msg.modelUsage.
+ * Keep using modelUsage as source-of-truth for tool-heavy runs.
  */
 export function aggregateUsageFromResult(
   msg: Extract<SDKMessage, { type: "result" }>,
@@ -88,9 +77,8 @@ export function aggregateUsageFromResult(
 
 function matchesAnyKey(requested: string, keys: string[]): boolean {
   if (keys.includes(requested)) return true;
-  // SDK may expand a short alias like "claude-sonnet-4-6" to a date-stamped
-  // full id like "claude-sonnet-4-6-20251101" in modelUsage keys. Prefix match
-  // covers both directions.
+  // Providers may normalize model ids (for example adding date stamps). Prefix
+  // match covers both directions.
   return keys.some(
     (k) => k === requested || k.startsWith(requested) || requested.startsWith(k),
   );

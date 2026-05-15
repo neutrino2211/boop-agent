@@ -4,7 +4,7 @@
 // → recall user preferences → cheap Haiku classifier → on important, route
 // the summary into the interaction agent as a synthetic system message so it
 // gets the same tone/spawn pipeline as a real user turn.
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query } from "./agent-sdk.js";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { aggregateUsageFromResult, EMPTY_USAGE, type UsageTotals } from "./usage.js";
@@ -13,9 +13,10 @@ import { sendImessage } from "./sendblue.js";
 import { ensureTrigger, getComposio, listConnectedToolkits } from "./composio.js";
 import { ensureWebhookSubscription } from "./composio-webhook.js";
 import { describeUserNow } from "./timezone-config.js";
+import { normalizeModelOrDefault } from "./model-config.js";
 
 const TRIGGER_SLUG = "GMAIL_NEW_GMAIL_MESSAGE";
-const CLASSIFIER_MODEL = "claude-haiku-4-5-20251001";
+const CLASSIFIER_MODEL = "anthropic/claude-haiku-4-5-20251001";
 
 // First event per connection since process boot is treated as warmup —
 // classification is skipped to avoid noise from any backfill behavior on
@@ -184,7 +185,7 @@ export async function classifyEmailImportance(
   options: { model?: string; recordUsage?: boolean } = {},
 ): Promise<{ important: boolean; summary?: string; usage: UsageTotals }> {
   const started = Date.now();
-  const model = options.model ?? CLASSIFIER_MODEL;
+  const model = normalizeModelOrDefault(options.model ?? CLASSIFIER_MODEL);
   const recordUsage = options.recordUsage ?? true;
   const userIdentities = await getUserGmailIdentities();
   const tzInfo = await describeUserNow();

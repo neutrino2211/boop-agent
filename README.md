@@ -4,7 +4,7 @@
 
 # Boop
 
-An iMessage-based personal agent built on top of the [Claude Agent SDK](https://docs.claude.com/en/api/agent-sdk/overview).
+An iMessage-based personal agent built on top of the [pi agent stack](https://github.com/earendil-works/pi-mono) (`pi-ai` + `pi-agent-core`).
 
 📺 **Watch the walkthrough:** [YouTube — How I built Boop](https://youtu.be/ZpmKjDDbqHs)
 
@@ -15,7 +15,7 @@ An iMessage-based personal agent built on top of the [Claude Agent SDK](https://
 </p>
 
 > **This is a starting point, not a finished product.**
-> It's the architecture I built for my own personal agent, opened up as a template so you can take it, text-enable your own Claude, and extend it however you want. Integrations are plugged in via [Composio](https://composio.dev/?utm_source=chris&utm_medium=youtube&utm_campaign=collab) — drop in an API key and connect Gmail, Slack, GitHub, Linear, Notion, and ~1000 others straight from the debug dashboard.
+> It's the architecture I built for my own personal agent, opened up as a template so you can take it, text-enable your own assistant, and extend it however you want. Integrations are plugged in via [Composio](https://composio.dev/?utm_source=chris&utm_medium=youtube&utm_campaign=collab) — drop in an API key and connect Gmail, Slack, GitHub, Linear, Notion, and ~1000 others straight from the debug dashboard.
 
 ```
  iMessage  →  Sendblue webhook  →  Interaction agent  →  Sub-agents (per task)
@@ -25,11 +25,11 @@ An iMessage-based personal agent built on top of the [Claude Agent SDK](https://
 ```
 
 Built on:
-- [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript) — the loop, tool use, sub-agents, MCP
+- [pi-agent-core + pi-ai](https://github.com/earendil-works/pi-mono) — agent loop + multi-provider model runtime (Anthropic/OpenRouter/Azure/OpenAI/...)
 - [Composio](https://composio.dev/?utm_source=chris&utm_medium=youtube&utm_campaign=collab) — integrations layer. One API key = Gmail, Slack, GitHub, Linear, Notion, Stripe, Supabase, + ~1000 more with hosted OAuth
 - [Sendblue](https://sendblue.com/?utm_source=raroque) — iMessage in/out (free on their agent plan)
 - [Convex](https://convex.link/chrisraroque) — real-time database for memory, agents, drafts
-- Your [Claude Code](https://claude.com/code?ref=chrisraroque) subscription — no separate Anthropic API key required
+- Your model provider key(s) — Anthropic, OpenRouter, or Azure OpenAI
 
 ---
 
@@ -48,7 +48,7 @@ Built on:
 - **Composio-powered integrations** — one API key unlocks 1000+ toolkits. Connect Gmail, Slack, GitHub, Linear, Notion, Drive, HubSpot, etc. with a click from the debug dashboard. Composio handles OAuth + token refresh.
 - **Debug dashboard** (React + Vite) with a Boop mascot — Dashboard (spend + tokens + agent status), Agents (timeline + integration logos), Automations, Memory (table + force-directed graph), Events, Connections.
 - **Convex** for persistence — real-time, typed, free tier.
-- **Uses your Claude Code subscription** — no separate Anthropic API key required.
+- **Provider-flexible runtime** — run Anthropic directly, or switch to OpenRouter/Azure via env + `set_model`.
 
 <p align="center">
   <img src="assets/agents-view.jpg" alt="Agents view in the Boop debug dashboard" width="900" />
@@ -110,11 +110,11 @@ If you want to see what it looked like before I transitioned to an iMessage-base
 
 You need accounts for these. Keep the tabs open — setup will ask for credentials from each.
 
-> **You should be able to get away with the free plan for each service (except Claude Code), and I'm working to secure discounts for you guys on the pro plans. If you work at any of these companies, please reach out!**
+> **You should be able to get away with the free plan for each service (except model usage itself), and I'm working to secure discounts for you guys on the pro plans. If you work at any of these companies, please reach out!**
 
 | Service | Why | Free? | Discount code |
 |---|---|---|---|
-| [Claude Code](https://claude.com/code?ref=chrisraroque) | Powers the agent. Install it, sign in once, the SDK uses your session. | Subscription required | Working on getting one (if you work here, please reach out!) |
+| LLM Provider (Anthropic/OpenRouter/Azure) | Powers the agent responses and tool routing. | Depends on provider | n/a |
 | [Sendblue](https://sendblue.com/?utm_source=raroque) | iMessage bridge. Get a number, grab API keys. | Free on their agent plan | `RAROQUE20` — 20% off for 6 months (helpful if you plan to commercialize) |
 | [Convex](https://convex.link/chrisraroque) | Database + realtime. | Free tier is plenty | Working on getting one (in touch with them 👀) |
 | [Composio](https://composio.dev/?utm_source=chris&utm_medium=youtube&utm_campaign=collab) | Integrations — one API key unlocks ~1000 toolkits. Optional if you just want chat + memory + automations without third-party access. | Free tier covers personal use | `CHRISXCOMPOSIO` — 1 month free on starter plan |
@@ -132,12 +132,12 @@ git clone https://github.com/raroque/boop-agent.git
 cd boop-agent
 npm install
 
-# 2. Install Claude Code (one-time, global) and sign in
-npm install -g @anthropic-ai/claude-code
-claude  # sign in, then Ctrl-C to exit
-
-# 3. Interactive setup — writes .env.local, creates Convex deployment
+# 2. Interactive setup — writes .env.local, creates Convex deployment
 npm run setup
+
+# 3. Add your provider credentials in .env.local
+# Examples: ANTHROPIC_API_KEY or OPENROUTER_API_KEY or
+# AZURE_OPENAI_API_KEY + AZURE_OPENAI_BASE_URL
 
 # 4. Install ngrok (one-time) and authorize it
 brew install ngrok
@@ -309,13 +309,13 @@ Deep dive: [ARCHITECTURE.md](./ARCHITECTURE.md). Adding your own tools: [INTEGRA
 
 Skills are reusable playbooks — `SKILL.md` files under `.claude/skills/` that teach the execution agent how to do a specific kind of task (write a YouTube script, draft a cold email, plan a trip, etc.).
 
-**How the Agent SDK handles them:** every `.claude/skills/*/SKILL.md` is loaded when the execution agent boots, and each skill's `description` gets injected into the agent's system prompt along with an instruction to pick the relevant one for the current task. You do **not** select skills per spawn — the agent picks based on which description matches. Only descriptions load upfront; the full SKILL.md body is pulled into context only when the agent actually invokes the skill, so adding more skills is cheap.
+**How Boop handles them now:** the execution agent has a `Skill` tool. When the model decides it needs a skill, it calls `Skill(name)` and Boop loads that skill's `SKILL.md` content from `.claude/skills/` (or `.agents/skills/`) into tool output context.
 
 The SDK is pretty smart about picking the right skill as long as your `description` is specific and front-loads the trigger phrases ("Use when the user asks to write a video script, turn research into a YouTube video…"). Vague descriptions = missed invocations.
 
-Wiring (in `server/execution-agent.ts`):
-- `settingSources: ["project"]` — tells the SDK to load `.claude/skills/`
-- `"Skill"` in `allowedTools` — enables the Skill tool
+Wiring (in `server/execution-agent.ts` + `server/agent-sdk.ts`):
+- `"Skill"` in `allowedTools` — enables skill loading during execution-agent runs
+- `Skill(name)` resolves and reads `SKILL.md` from project skills directories
 
 Only the **execution agent** loads skills. The dispatcher (interaction-agent) stays in SDK isolation mode, so it never sees them — which is correct, because the dispatcher should never do work, only route.
 
@@ -330,21 +330,17 @@ description: Write a tight, retention-focused YouTube script from a topic or out
 <instructions the agent follows when this skill is invoked>
 ```
 
-There's a soft budget (~15k chars by default, via `SLASH_COMMAND_TOOL_CHAR_BUDGET`) for the combined skill-description block in context — if you end up with many skills, keep descriptions sharp so none get truncated.
-
 Example included: `.claude/skills/youtube-script-writer/`.
 
 ---
 
-## Using your Claude Code subscription
+## Model providers
 
-The Claude Agent SDK reuses the credentials Claude Code writes to your machine when you sign in. You do not need an `ANTHROPIC_API_KEY`.
+Boop now runs on `pi-ai`, so model/provider selection is explicit.
 
-- Install once: `npm install -g @anthropic-ai/claude-code`
-- Run `claude` in a terminal, sign in.
-- That's it — the SDK finds the session automatically.
-
-If you'd prefer an API key (e.g. for a deployed server), set `ANTHROPIC_API_KEY` in `.env.local` and the SDK will use it instead.
+- Set `BOOP_MODEL` as `provider/model-id` (for example `anthropic/claude-sonnet-4-6`, `openrouter/anthropic/claude-sonnet-4.5`, `azure-openai-responses/gpt-5-mini`).
+- Provide the matching provider API key(s) in `.env.local`.
+- At runtime, switch models from iMessage via `set_model`; the override is saved in Convex settings and applied on the next turn.
 
 ---
 
@@ -357,14 +353,16 @@ Everything lives in `.env.local` (auto-created by `npm run setup`). See `.env.ex
 | `CONVEX_URL` / `VITE_CONVEX_URL` | yes | Convex deployment URL. Written by `npx convex dev`. |
 | `SENDBLUE_API_KEY` / `SENDBLUE_API_SECRET` | yes | From your Sendblue dashboard. |
 | `SENDBLUE_FROM_NUMBER` | yes | Your Sendblue-provisioned number. |
-| `BOOP_MODEL` | no | Default `claude-sonnet-4-6`. Used as the fallback when no runtime override is set. The user can switch the model at runtime from iMessage ("use opus", "switch to sonnet") via the `set_model` self-tool — that override is stored in the Convex `settings` table and takes precedence over this env var. |
+| `BOOP_MODEL` | no | Default `anthropic/claude-sonnet-4-6`. Format is `provider/model-id` (for example `openrouter/anthropic/claude-sonnet-4.5`, `azure-openai-responses/gpt-5-mini`). Used as fallback when no runtime override is set. |
 | `BOOP_UPSTREAM_CHECK` | no | Set to `false` to disable the new-version banner on `npm run dev`. Default: on. |
 | `PORT` | no | Default `3456`. |
 | `PUBLIC_URL` | no | Base URL used in the Sendblue webhook. Composio handles its own OAuth callbacks on `platform.composio.dev`, so this is just for inbound iMessage. |
 | `VOYAGE_API_KEY` **or** `OPENAI_API_KEY` | optional | Unlocks vector recall. Falls back to substring. |
 | `COMPOSIO_API_KEY` | optional | Enables integrations. Without it, plain chat + memory + automations still work. Get one at [app.composio.dev/developers](https://app.composio.dev/developers?utm_source=chris&utm_medium=youtube&utm_campaign=collab). |
 | `COMPOSIO_USER_ID` | optional | Stable user id Composio keys connections under. Defaults to `boop-default`. |
-| `ANTHROPIC_API_KEY` | optional | Bypass the Claude Code subscription. |
+| `ANTHROPIC_API_KEY` | optional | Required when using `anthropic/...` models. |
+| `OPENROUTER_API_KEY` | optional | Required when using `openrouter/...` models. |
+| `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_BASE_URL` | optional | Required when using `azure-openai-responses/...` models. |
 
 ---
 
@@ -427,7 +425,7 @@ export const CURATED_TOOLKITS: CuratedToolkit[] = [
 
 ### Cost tracking
 
-Every execution agent's `total_cost_usd` comes straight from the Claude Agent SDK's `result` message (authoritative, matches Anthropic's billing). You'll see real dollar amounts in the Dashboard tab's Cost tile and per-agent cards.
+Every execution agent's `total_cost_usd` is aggregated from pi's per-turn usage stream. You'll see dollar amounts in the Dashboard tab's Cost tile and per-agent cards.
 
 Every LLM call — dispatcher turn, execution-agent run, memory extraction, consolidation (proposer / adversary / judge) — also writes a row to the `usageRecords` table with per-layer tokens (including cache read/write) and cost. `usageRecords:summary` gives you totals by source so you can see which layer is actually burning the bill. Each row reports the model the caller requested, not the model-routing the SDK did internally.
 
@@ -573,8 +571,11 @@ Every release lists additions under [CHANGELOG.md](./CHANGELOG.md), with `[BREAK
 **I want to skip Sendblue for now.**
 - The server exposes `POST /chat` with `{ conversationId, content }` — curl or a tiny client can drive the agent directly, no iMessage required.
 
-**Claude SDK says no credentials.**
-- Run `claude` once and sign in, or set `ANTHROPIC_API_KEY` in `.env.local`.
+**Model provider says no credentials.**
+- Ensure the API key for your configured `BOOP_MODEL` provider is set:
+  - `ANTHROPIC_API_KEY` for `anthropic/...`
+  - `OPENROUTER_API_KEY` for `openrouter/...`
+  - `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_BASE_URL` for `azure-openai-responses/...`
 
 **"Cannot send messages to self" / "missing required parameter: from_number".**
 - `SENDBLUE_FROM_NUMBER` is set to your personal cell instead of your Sendblue-provisioned number. Run `npm run sendblue:sync` to pull the correct number from `sendblue lines` and write it to `.env.local`.
