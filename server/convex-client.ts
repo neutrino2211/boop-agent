@@ -1,9 +1,9 @@
 import { ConvexHttpClient } from "convex/browser";
 
-const url = process.env.CONVEX_URL;
+const url = process.env.CONVEX_URL?.trim() || process.env.VITE_CONVEX_URL?.trim();
 if (!url) {
   throw new Error(
-    "CONVEX_URL is not set. Run `npm run setup` or `npx convex dev` to configure Convex.",
+    "Convex URL is not set. Expected CONVEX_URL (preferred) or VITE_CONVEX_URL.",
   );
 }
 

@@ -187,6 +187,10 @@ CONVEX_DEPLOY_KEY=<your_deploy_key>
 CONVEX_DEPLOYMENT=dev:your-deployment-name
 ```
 
+When `BOOP_AUTO_CONVEX_SETUP=true`, startup now fails fast unless at least one
+of `CONVEX_DEPLOY_KEY` or `CONVEX_DEPLOYMENT` is set (to prevent accidental
+anonymous/local deployment selection in non-interactive environments).
+
 When `_generated` is missing, preflight will run:
 
 ```bash

@@ -5,8 +5,11 @@ services:
       dockerfile: Dockerfile
     container_name: boop-agent
     restart: unless-stopped
-    # Environment variables are expected to be injected by the deployment
-    # platform (e.g. Dokploy), not from a checked-in local env file.
+    # Dokploy writes UI environment variables to a runtime `.env` file next to
+    # this compose file. `env_file` injects all of them into the container
+    # without committing `.env` to git.
+    env_file:
+      - .env
     ports:
       - "3456:3456"
     healthcheck:

@@ -12,6 +12,12 @@ function isTruthy(value) {
   return /^(1|true|yes|on)$/i.test(String(value ?? "").trim());
 }
 
+function hasDeploymentConfig() {
+  const deployKey = String(process.env.CONVEX_DEPLOY_KEY ?? "").trim();
+  const deployment = String(process.env.CONVEX_DEPLOYMENT ?? "").trim();
+  return Boolean(deployKey || deployment);
+}
+
 function generateConvexTypes() {
   const npx = process.platform === "win32" ? "npx.cmd" : "npx";
   const args = ["convex", "dev", "--once", "--typecheck", "disable", "--tail-logs", "disable"];
@@ -39,7 +45,24 @@ function generateConvexTypes() {
 
 if (!existsSync(generated)) {
   const autoSetup = isTruthy(process.env.BOOP_AUTO_CONVEX_SETUP);
-  if (autoSetup) generateConvexTypes();
+  if (autoSetup) {
+    if (!hasDeploymentConfig()) {
+      console.error(`
+┌─────────────────────────────────────────────────────────────┐
+│  BOOP_AUTO_CONVEX_SETUP is enabled, but Convex config is    │
+│  incomplete for non-interactive startup.                    │
+│                                                             │
+│  Set at least one of:                                       │
+│    CONVEX_DEPLOY_KEY=...                                    │
+│    CONVEX_DEPLOYMENT=dev:<deployment-name>                  │
+│                                                             │
+│  Then restart.                                              │
+└─────────────────────────────────────────────────────────────┘
+`);
+      process.exit(1);
+    }
+    generateConvexTypes();
+  }
 }
 
 if (!existsSync(generated)) {
