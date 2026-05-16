@@ -174,6 +174,29 @@ Text your Sendblue-provisioned number from a **different** phone. The agent repl
 
 ---
 
+## Cloud / Docker deployments
+
+`convex/_generated/` is gitignored in this repo, so cloud builds from Git won't include it by default.
+
+`npm run start` now supports an env-driven bootstrap path:
+
+```bash
+BOOP_AUTO_CONVEX_SETUP=true
+CONVEX_DEPLOY_KEY=<your_deploy_key>
+# optional if your key is project-scoped:
+CONVEX_DEPLOYMENT=dev:your-deployment-name
+```
+
+When `_generated` is missing, preflight will run:
+
+```bash
+npx convex dev --once --typecheck disable --tail-logs disable
+```
+
+This generates `convex/_generated/` non-interactively and then boots the server.
+
+---
+
 ## How the Sendblue integration works
 
 Boop uses the [Sendblue CLI](https://github.com/sendblue-api/sendblue-cli) (`@sendblue/cli`) to eliminate almost all manual dashboard work. Three NPM scripts wrap it:

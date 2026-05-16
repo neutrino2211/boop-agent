@@ -179,18 +179,17 @@ export async function spawnExecutionAgent(opts: SpawnOptions): Promise<SpawnResu
         }
       } else if (msg.type === "user") {
         for (const block of msg.message.content) {
-          if (block.type === "tool_result") {
-            const text = Array.isArray(block.content)
-              ? block.content
-                  .map((c: { type: string; text?: string }) => (c.type === "text" ? (c.text ?? "") : ""))
-                  .join("")
-              : String(block.content ?? "");
-            await convex.mutation(api.agents.addLog, {
-              agentId,
-              logType: "tool_result",
-              content: text.slice(0, 2000),
-            });
-          }
+          if (typeof block === "string" || block.type !== "tool_result") continue;
+          const text = Array.isArray(block.content)
+            ? block.content
+                .map((c: { type: string; text?: string }) => (c.type === "text" ? (c.text ?? "") : ""))
+                .join("")
+            : String(block.content ?? "");
+          await convex.mutation(api.agents.addLog, {
+            agentId,
+            logType: "tool_result",
+            content: text.slice(0, 2000),
+          });
         }
       } else if (msg.type === "result") {
         // Always take the aggregate from modelUsage — msg.usage is just the
