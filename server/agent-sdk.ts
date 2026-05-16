@@ -460,6 +460,7 @@ export async function* query(params: QueryParams): AsyncGenerator<SDKMessage> {
   const tools = [...mcpTools, ...builtIns];
 
   const out: SDKMessage[] = [];
+  let assistantError: string | null = null;
   const modelUsage: Record<
     string,
     {
@@ -470,6 +471,25 @@ export async function* query(params: QueryParams): AsyncGenerator<SDKMessage> {
     }
   > = {};
   let totalCostUsd = 0;
+  let sawAssistantMessageEndThisTurn = false;
+  let sawToolResultMessageEndThisTurn = false;
+
+  function recordUsage(msg: AssistantMessage): void {
+    const key = msg.responseModel ?? msg.model;
+    const slot =
+      modelUsage[key] ??
+      (modelUsage[key] = {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadInputTokens: 0,
+        cacheCreationInputTokens: 0,
+      });
+    slot.inputTokens += msg.usage.input;
+    slot.outputTokens += msg.usage.output;
+    slot.cacheReadInputTokens += msg.usage.cacheRead;
+    slot.cacheCreationInputTokens += msg.usage.cacheWrite;
+    totalCostUsd += msg.usage.cost.total;
+  }
 
   const agent = new Agent({
     initialState: {
@@ -481,28 +501,46 @@ export async function* query(params: QueryParams): AsyncGenerator<SDKMessage> {
   });
 
   const unsubscribe = agent.subscribe((event) => {
-    if (event.type !== "message_end") return;
-    const msg = event.message;
-    if (isAssistantMessage(msg)) {
-      out.push({ type: "assistant", message: { content: assistantBlocks(msg) } });
-      const key = msg.responseModel ?? msg.model;
-      const slot =
-        modelUsage[key] ??
-        (modelUsage[key] = {
-          inputTokens: 0,
-          outputTokens: 0,
-          cacheReadInputTokens: 0,
-          cacheCreationInputTokens: 0,
-        });
-      slot.inputTokens += msg.usage.input;
-      slot.outputTokens += msg.usage.output;
-      slot.cacheReadInputTokens += msg.usage.cacheRead;
-      slot.cacheCreationInputTokens += msg.usage.cacheWrite;
-      totalCostUsd += msg.usage.cost.total;
+    if (event.type === "turn_start") {
+      sawAssistantMessageEndThisTurn = false;
+      sawToolResultMessageEndThisTurn = false;
       return;
     }
-    if (isToolResultMessage(msg)) {
-      out.push({ type: "user", message: { content: toolResultBlocks(msg) } });
+    if (event.type === "message_end") {
+      const msg = event.message;
+      if (isAssistantMessage(msg)) {
+        sawAssistantMessageEndThisTurn = true;
+        out.push({ type: "assistant", message: { content: assistantBlocks(msg) } });
+        recordUsage(msg);
+        return;
+      }
+      if (isToolResultMessage(msg)) {
+        sawToolResultMessageEndThisTurn = true;
+        out.push({ type: "user", message: { content: toolResultBlocks(msg) } });
+      }
+      return;
+    }
+    if (event.type === "turn_end") {
+      const maybeAssistant = asRecord(event.message);
+      if (
+        maybeAssistant?.role === "assistant" &&
+        typeof maybeAssistant.errorMessage === "string" &&
+        maybeAssistant.errorMessage.trim()
+      ) {
+        assistantError = maybeAssistant.errorMessage.trim();
+      }
+      // Some provider/runtime paths surface final assistant content and/or
+      // tool results only on turn_end (without prior message_end events).
+      // Preserve those so callers don't get silent zero-log completions.
+      if (isAssistantMessage(event.message) && !sawAssistantMessageEndThisTurn) {
+        out.push({ type: "assistant", message: { content: assistantBlocks(event.message) } });
+        recordUsage(event.message);
+      }
+      if (event.toolResults.length > 0 && !sawToolResultMessageEndThisTurn) {
+        for (const toolResult of event.toolResults) {
+          out.push({ type: "user", message: { content: toolResultBlocks(toolResult) } });
+        }
+      }
     }
   });
 
@@ -514,6 +552,15 @@ export async function* query(params: QueryParams): AsyncGenerator<SDKMessage> {
   } finally {
     abort?.signal.removeEventListener("abort", onAbort);
     unsubscribe();
+  }
+
+  const hasAssistantText = out.some(
+    (msg) =>
+      msg.type === "assistant" &&
+      msg.message.content.some((block) => block.type === "text" && block.text.trim().length > 0),
+  );
+  if (!hasAssistantText && assistantError) {
+    throw new Error(assistantError);
   }
 
   for (const msg of out) yield msg;
