@@ -10,7 +10,9 @@ RUN npm ci
 COPY . .
 
 ENV NODE_ENV=production
+ENV BOOP_AUTO_CONVEX_SETUP=true
 EXPOSE 3456
 
-# Starts the Express + WS server (requires convex/_generated to exist).
+# Starts the Express + WS server.
+# preflight auto-generates convex/_generated when BOOP_AUTO_CONVEX_SETUP=true.
 CMD ["npm", "run", "start"]
