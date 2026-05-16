@@ -19,6 +19,8 @@ import { createComposioRouter } from "./composio-routes.js";
 import { ensureProactiveWatcher } from "./proactive-email.js";
 import { preloadLocalModel } from "./embeddings.js";
 import { createMemoryRouter } from "./memory-routes.js";
+import { createProviderConfigRouter } from "./provider-config-routes.js";
+import { hydrateProviderEnvOverrides } from "./provider-config.js";
 
 function parsePositiveMs(raw: string | undefined, fallback: number): number {
   const parsed = Number(raw);
@@ -77,6 +79,12 @@ function resolveDebugUiDir(): string | null {
 }
 
 async function main() {
+  try {
+    await hydrateProviderEnvOverrides();
+  } catch (err) {
+    console.warn("[provider-config] failed to hydrate env overrides", err);
+  }
+
   const stopCleanupLoop = startCleanupLoop();
   const stopAutomationLoop = startAutomationLoop();
   const stopHeartbeatLoop = startHeartbeatLoop();
@@ -165,13 +173,16 @@ async function main() {
   const sendblueRouter = createSendblueRouter();
   const composioRouter = createComposioRouter();
   const memoryRouter = createMemoryRouter();
+  const providerConfigRouter = createProviderConfigRouter();
 
   app.use("/sendblue", sendblueRouter);
   app.use("/composio", composioRouter);
   app.use("/memory", memoryRouter);
+  app.use("/provider-config", providerConfigRouter);
   api.use("/sendblue", sendblueRouter);
   api.use("/composio", composioRouter);
   api.use("/memory", memoryRouter);
+  api.use("/provider-config", providerConfigRouter);
 
   const cancelHandler: express.RequestHandler = (req, res) => {
     const id = firstParam(req.params.id);

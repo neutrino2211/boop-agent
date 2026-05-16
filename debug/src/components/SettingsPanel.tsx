@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api.js";
+import { ProviderSettingsSection } from "./ProviderSettingsSection.js";
 
 interface ToggleSetting {
   kind: "toggle";
@@ -85,6 +86,7 @@ export function SettingsPanel({ isDark }: { isDark: boolean }) {
             <TimezoneRow key={s.key} setting={s} isDark={isDark} />
           ),
         )}
+        <ProviderSettingsSection isDark={isDark} />
       </div>
     </div>
   );
