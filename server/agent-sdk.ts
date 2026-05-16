@@ -138,6 +138,13 @@ function extractToolDescription(raw: unknown): string {
   return "Tool";
 }
 
+function isZodLike(value: unknown): value is ZodTypeAny {
+  const rec = asRecord(value);
+  if (!rec) return false;
+  const standard = asRecord(rec["~standard"]);
+  return Boolean(standard?.vendor === "zod" && rec._def);
+}
+
 function extractToolSchema(raw: unknown): TSchema {
   const fallback = Type.Object({}, { additionalProperties: true });
   const obj = asRecord(raw);
@@ -149,8 +156,19 @@ function extractToolSchema(raw: unknown): TSchema {
     asRecord(obj.function)?.parameters,
   ];
   for (const candidate of candidates) {
+    if (isZodLike(candidate)) {
+      return toToolJsonSchema(candidate) as unknown as TSchema;
+    }
     const rec = asRecord(candidate);
     if (rec) {
+      const entries = Object.entries(rec);
+      if (entries.length > 0 && entries.every(([, v]) => isZodLike(v))) {
+        const shape: Record<string, ZodTypeAny> = {};
+        for (const [k, v] of entries) {
+          shape[k] = v as ZodTypeAny;
+        }
+        return toToolJsonSchema(z.object(shape)) as unknown as TSchema;
+      }
       const copy = { ...rec };
       delete copy.$schema;
       return copy as unknown as TSchema;

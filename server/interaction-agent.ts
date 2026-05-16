@@ -4,7 +4,11 @@ import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { createMemoryMcp } from "./memory/tools.js";
 import { extractAndStore } from "./memory/extract.js";
-import { availableIntegrations, spawnExecutionAgent } from "./execution-agent.js";
+import {
+  availableIntegrations,
+  ensureIntegrationsReady,
+  spawnExecutionAgent,
+} from "./execution-agent.js";
 import { createAutomationMcp } from "./automation-tools.js";
 import { createDraftDecisionMcp } from "./draft-tools.js";
 import { createSelfMcp } from "./self-tools.js";
@@ -230,7 +234,10 @@ function friendlyModelFailure(err: unknown): string | null {
 
 export async function handleUserMessage(opts: HandleOpts): Promise<string> {
   const turnId = randomId("turn");
-  const integrations = availableIntegrations();
+  let integrations = await ensureIntegrationsReady();
+  if (integrations.length === 0) {
+    integrations = availableIntegrations();
+  }
 
   const inboundRole = opts.kind === "proactive" ? "system" : "user";
   await convex.mutation(api.messages.send, {

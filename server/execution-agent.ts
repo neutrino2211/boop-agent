@@ -2,7 +2,11 @@ import { query } from "./agent-sdk.js";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { broadcast } from "./broadcast.js";
-import { buildMcpServersForIntegrations, listIntegrations } from "./integrations/registry.js";
+import {
+  buildMcpServersForIntegrations,
+  listIntegrations,
+  refreshIntegrations,
+} from "./integrations/registry.js";
 import { createDraftStagingMcp } from "./draft-tools.js";
 import { aggregateUsageFromResult, EMPTY_USAGE, type UsageTotals } from "./usage.js";
 import { getRuntimeModel } from "./runtime-config.js";
@@ -89,6 +93,41 @@ export interface SpawnResult {
   status: "completed" | "failed" | "cancelled";
 }
 
+function normalizeIntegrationName(input: string, available: string[]): string {
+  const trimmed = input.trim();
+  if (!trimmed) return trimmed;
+  const lower = trimmed.toLowerCase();
+  const byExact = available.find((name) => name === lower);
+  if (byExact) return byExact;
+
+  const squash = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const target = squash(trimmed);
+  const bySquashed = available.find((name) => squash(name) === target);
+  if (bySquashed) return bySquashed;
+
+  return lower;
+}
+
+function inferIntegrationsFromTask(task: string, available: string[]): string[] {
+  const lower = task.toLowerCase();
+  const out = new Set<string>();
+  const maybeAdd = (name: string, hints: string[]) => {
+    if (!available.includes(name)) return;
+    if (hints.some((hint) => lower.includes(hint))) out.add(name);
+  };
+
+  maybeAdd("gmail", ["gmail", "inbox", "email"]);
+  maybeAdd("googlecalendar", ["google calendar", "calendar", "meeting", "schedule"]);
+  maybeAdd("googledrive", ["google drive", "drive file", "drive folder"]);
+  maybeAdd("googledocs", ["google doc", "docs"]);
+  maybeAdd("googlesheets", ["google sheet", "spreadsheet", "sheets"]);
+  maybeAdd("slack", ["slack", "channel", "workspace"]);
+  maybeAdd("github", ["github", "pull request", "issue", "repo"]);
+  maybeAdd("notion", ["notion", "page", "database"]);
+
+  return [...out];
+}
+
 export async function spawnExecutionAgent(opts: SpawnOptions): Promise<SpawnResult> {
   const agentId = randomId("agent");
   const name = opts.name ?? (opts.integrations.join("+") || "general");
@@ -115,8 +154,43 @@ export async function spawnExecutionAgent(opts: SpawnOptions): Promise<SpawnResu
 
   await convex.mutation(api.agents.update, { agentId, status: "running" });
 
+  let known = listIntegrations().map((i) => i.name);
+  if (known.length === 0) {
+    try {
+      await refreshIntegrations();
+      known = listIntegrations().map((i) => i.name);
+    } catch (err) {
+      console.error("[integrations] initial refresh before spawn failed", err);
+    }
+  }
+  let requestedIntegrations = opts.integrations.map((name) =>
+    normalizeIntegrationName(name, known),
+  );
+  if (requestedIntegrations.length === 0) {
+    const inferred = inferIntegrationsFromTask(opts.task, known);
+    if (inferred.length > 0) {
+      requestedIntegrations = inferred;
+      logAgent(`inferred integrations from task: ${inferred.join(", ")}`);
+    }
+  }
+  const missing = requestedIntegrations.filter((name) => !known.includes(name));
+  if (missing.length > 0) {
+    logAgent(
+      `refreshing integrations before run (missing: ${missing.join(", ")})`,
+    );
+    try {
+      await refreshIntegrations();
+      known = listIntegrations().map((i) => i.name);
+      requestedIntegrations = opts.integrations.map((name) =>
+        normalizeIntegrationName(name, known),
+      );
+    } catch (err) {
+      console.error("[integrations] refresh before spawn failed", err);
+    }
+  }
+
   const integrationServers = await buildMcpServersForIntegrations(
-    opts.integrations,
+    requestedIntegrations,
     opts.conversationId,
   );
   const draftServer = opts.conversationId
@@ -269,4 +343,16 @@ export async function retryAgent(agentId: string): Promise<SpawnResult | null> {
 
 export function availableIntegrations(): string[] {
   return listIntegrations().map((i) => i.name);
+}
+
+export async function ensureIntegrationsReady(): Promise<string[]> {
+  let names = listIntegrations().map((i) => i.name);
+  if (names.length > 0) return names;
+  try {
+    await refreshIntegrations();
+  } catch (err) {
+    console.error("[integrations] ensureIntegrationsReady refresh failed", err);
+  }
+  names = listIntegrations().map((i) => i.name);
+  return names;
 }
