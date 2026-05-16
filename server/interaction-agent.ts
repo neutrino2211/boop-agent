@@ -164,6 +164,13 @@ Available integrations for spawn_agent: {{INTEGRATIONS}}
 
 Format: Plain iMessage-friendly text. Markdown sparingly. Keep replies under ~400 chars when you can.`;
 
+const DEFAULT_GLITCH_FALLBACK = "Hmm — got tangled up there. Want to try that again?";
+const ALT_GLITCH_FALLBACK = "I’m here, but that reply glitched. Can you send that once more?";
+const CANNED_REFUSAL =
+  /^i['’]?m sorry,?\s*but i cannot assist with that request\.?$/i;
+const BENIGN_SMALLTALK =
+  /^(?:hi+|hello+|hey+|yo+|sup|what'?s up|good (?:morning|afternoon|evening)|thanks|thank you|ok(?:ay)?|cool|why not\??)$/i;
+
 interface HandleOpts {
   conversationId: string;
   content: string;
@@ -177,6 +184,48 @@ interface HandleOpts {
 
 function randomId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function isHistoryNoise(role: "user" | "assistant" | "system", content: string): boolean {
+  if (role !== "assistant") return false;
+  const trimmed = content.trim();
+  return (
+    trimmed === DEFAULT_GLITCH_FALLBACK ||
+    trimmed === ALT_GLITCH_FALLBACK ||
+    CANNED_REFUSAL.test(trimmed)
+  );
+}
+
+function friendlyModelFailure(err: unknown): string | null {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (
+    /No API key for provider:\s*anthropic|Anthropic API key is required/i.test(raw)
+  ) {
+    if (process.env.AZURE_OPENAI_API_KEY) {
+      return "I’m set to Anthropic right now, but ANTHROPIC_API_KEY is missing. Switch to Azure (set_model: azure-openai-responses/gpt-5-mini) or add Anthropic key.";
+    }
+    return "I’m set to Anthropic, but ANTHROPIC_API_KEY isn’t configured.";
+  }
+  if (
+    /No API key for provider:\s*azure-openai-responses|Azure OpenAI API key is required/i.test(
+      raw,
+    )
+  ) {
+    return "I’m set to Azure, but AZURE_OPENAI_API_KEY isn’t configured.";
+  }
+  if (/Azure OpenAI base URL is required|Invalid Azure OpenAI base URL/i.test(raw)) {
+    return "Azure key is present, but AZURE_OPENAI_BASE_URL (or AZURE_OPENAI_RESOURCE_NAME) is missing/invalid.";
+  }
+  if (/API version not supported/i.test(raw)) {
+    return "Azure rejected AZURE_OPENAI_API_VERSION. In Settings → AI providers, clear API version (use default v1) or set a supported version.";
+  }
+  if (/DeploymentNotFound|deployment.*not found|model.*not found/i.test(raw)) {
+    return "Azure couldn’t find that deployment/model. Set the runtime model to your deployed name, or add AZURE_OPENAI_DEPLOYMENT_NAME_MAP in Settings → AI providers.";
+  }
+  if (/No API key for provider:\s*openrouter/i.test(raw)) {
+    return "I’m set to OpenRouter, but OPENROUTER_API_KEY isn’t configured.";
+  }
+  return null;
 }
 
 export async function handleUserMessage(opts: HandleOpts): Promise<string> {
@@ -286,16 +335,17 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
     limit: 10,
   });
   const priorTurns = history.slice(0, -1);
+  const priorTurnsForPrompt = priorTurns.filter((m) => !isHistoryNoise(m.role, m.content));
   let previousAssistantReply = "";
-  for (let i = priorTurns.length - 1; i >= 0; i--) {
-    const msg = priorTurns[i];
+  for (let i = priorTurnsForPrompt.length - 1; i >= 0; i--) {
+    const msg = priorTurnsForPrompt[i];
     if (msg.role !== "assistant") continue;
     const trimmed = msg.content.trim();
     if (!trimmed) continue;
     previousAssistantReply = trimmed;
     break;
   }
-  const historyBlock = priorTurns
+  const historyBlock = priorTurnsForPrompt
     .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
     .join("\n");
 
@@ -391,7 +441,9 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
     }
   } catch (err) {
     console.error(`[turn ${tag}] query failed`, err);
-    reply = "Sorry — I hit an error processing that. Try again in a moment.";
+    reply =
+      friendlyModelFailure(err) ??
+      "Sorry — I hit an error processing that. Try again in a moment.";
   }
 
   // Sometimes the model produces a placeholder string like "(no output)" or
@@ -418,9 +470,24 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
     // Frame as model-side hiccup, not user error — the placeholder fires
     // when the model loses the thread mid-tool-call, the user's phrasing
     // is fine.
-    const defaultFallback = "Hmm — got tangled up there. Want to try that again?";
-    const alternateFallback = "I’m here, but that reply glitched. Can you send that once more?";
-    reply = previousAssistantReply === defaultFallback ? alternateFallback : defaultFallback;
+    reply =
+      previousAssistantReply === DEFAULT_GLITCH_FALLBACK
+        ? ALT_GLITCH_FALLBACK
+        : DEFAULT_GLITCH_FALLBACK;
+  }
+
+  const userTrimmed = opts.content.trim();
+  if (
+    CANNED_REFUSAL.test(reply) &&
+    (BENIGN_SMALLTALK.test(userTrimmed) || CANNED_REFUSAL.test(previousAssistantReply))
+  ) {
+    log("detected canned refusal loop on benign message; rewriting reply");
+    if (/^why not\??$/i.test(userTrimmed)) {
+      reply =
+        "That refusal was my miss, not your request. I’m back — tell me what you want and I’ll handle it.";
+    } else {
+      reply = "Hey 👋 I’m here now. What do you want me to help with?";
+    }
   }
 
   if (usage.costUsd > 0 || usage.inputTokens > 0) {
