@@ -6,7 +6,7 @@ import { WebSocketServer } from "ws";
 import { addClient } from "./broadcast.js";
 import { createSendblueRouter } from "./sendblue.js";
 import { handleUserMessage } from "./interaction-agent.js";
-import { loadIntegrations } from "./integrations/registry.js";
+import { listIntegrations, loadIntegrations } from "./integrations/registry.js";
 import { startCleanupLoop } from "./memory/clean.js";
 import { startAutomationLoop } from "./automations.js";
 import { startHeartbeatLoop } from "./heartbeat.js";
@@ -17,16 +17,90 @@ import { ensureProactiveWatcher } from "./proactive-email.js";
 import { preloadLocalModel } from "./embeddings.js";
 import { createMemoryRouter } from "./memory-routes.js";
 
+function parsePositiveMs(raw: string | undefined, fallback: number): number {
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const INTEGRATIONS_BOOT_TIMEOUT_MS = parsePositiveMs(
+  process.env.BOOP_INTEGRATIONS_BOOT_TIMEOUT_MS,
+  12_000,
+);
+const INTEGRATIONS_RETRY_MS = parsePositiveMs(
+  process.env.BOOP_INTEGRATIONS_RETRY_MS,
+  60_000,
+);
+const SHOULD_PRELOAD_LOCAL_EMBEDDINGS =
+  process.env.BOOP_PRELOAD_LOCAL_EMBEDDINGS === "true" ||
+  (process.env.BOOP_PRELOAD_LOCAL_EMBEDDINGS !== "false" &&
+    process.env.NODE_ENV !== "production");
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+}
+
 async function main() {
-  await loadIntegrations();
-  startCleanupLoop();
-  startAutomationLoop();
-  startHeartbeatLoop();
-  startConsolidationLoop();
+  const stopCleanupLoop = startCleanupLoop();
+  const stopAutomationLoop = startAutomationLoop();
+  const stopHeartbeatLoop = startHeartbeatLoop();
+  const stopConsolidationLoop = startConsolidationLoop();
+  const stoppers = [
+    stopCleanupLoop,
+    stopAutomationLoop,
+    stopHeartbeatLoop,
+    stopConsolidationLoop,
+  ];
+  let integrationsReady = false;
+  let integrationsLoading = false;
+  let integrationsLastError: string | null = null;
+
+  const loadIntegrationsWithRecovery = async (reason: "startup" | "retry") => {
+    if (integrationsLoading) return;
+    integrationsLoading = true;
+    try {
+      await withTimeout(
+        loadIntegrations(),
+        INTEGRATIONS_BOOT_TIMEOUT_MS,
+        `[integrations] ${reason}`,
+      );
+      integrationsReady = true;
+      integrationsLastError = null;
+    } catch (err) {
+      integrationsReady = false;
+      integrationsLastError = String(err);
+      console.error(`[integrations] ${reason} failed`, err);
+    } finally {
+      integrationsLoading = false;
+    }
+  };
+
+  // Startup should not block on third-party integration APIs.
+  void loadIntegrationsWithRecovery("startup");
+  const integrationRetryTimer = setInterval(() => {
+    if (integrationsReady || integrationsLoading) return;
+    void loadIntegrationsWithRecovery("retry");
+  }, INTEGRATIONS_RETRY_MS);
+  integrationRetryTimer.unref?.();
+
   // No-op when a paid embedding key is set; otherwise downloads/loads the
   // local BGE-large model in the background so the first user-facing
-  // recall() doesn't pay the model-load cost.
-  preloadLocalModel();
+  // recall() doesn't pay the model-load cost. Disabled by default in
+  // production because model warmup is heavy on cold starts.
+  if (SHOULD_PRELOAD_LOCAL_EMBEDDINGS) {
+    preloadLocalModel();
+  }
 
   // If a stable public URL is configured, register the Composio webhook +
   // Gmail trigger now. For ngrok-based dev, scripts/dev.mjs drives the same
@@ -49,7 +123,14 @@ async function main() {
   app.use(express.json({ limit: "2mb" }));
 
   app.get("/health", (_req, res) => {
-    res.json({ ok: true, service: "boop-agent" });
+    res.json({
+      ok: true,
+      service: "boop-agent",
+      integrationsReady,
+      integrationsLoading,
+      integrationsLoaded: listIntegrations().length,
+      integrationsLastError,
+    });
   });
 
   app.use("/sendblue", createSendblueRouter());
@@ -114,6 +195,51 @@ async function main() {
     console.log(`  sendblue    POST http://localhost:${port}/sendblue/webhook`);
     console.log(`  websocket   WS   ws://localhost:${port}/ws`);
   });
+
+  let shuttingDown = false;
+  const shutdown = (signal: NodeJS.Signals) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[shutdown] ${signal} received; draining connections...`);
+
+    clearInterval(integrationRetryTimer);
+    for (const stop of stoppers) {
+      try {
+        stop();
+      } catch {
+        // Keep shutdown moving even if one loop teardown throws.
+      }
+    }
+
+    for (const client of wss.clients) {
+      try {
+        client.close(1001, "server shutdown");
+      } catch {
+        // Ignore per-socket close errors during shutdown.
+      }
+    }
+    wss.close();
+
+    const hardStop = setTimeout(() => {
+      console.error("[shutdown] force-exiting after timeout");
+      process.exit(1);
+    }, 10_000);
+    hardStop.unref?.();
+
+    server.close((err) => {
+      clearTimeout(hardStop);
+      if (err) {
+        console.error("[shutdown] server close failed", err);
+        process.exit(1);
+        return;
+      }
+      console.log("[shutdown] complete");
+      process.exit(0);
+    });
+  };
+
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
 main().catch((err) => {

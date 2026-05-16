@@ -179,6 +179,25 @@ Text your Sendblue-provisioned number from a **different** phone. The agent repl
 `convex/_generated/` is checked into git in this repo, so cloud builds from Git
 already include generated Convex types.
 
+Production deploys now use a compiled server build:
+
+```bash
+npm run build:server
+npm run start:prod
+```
+
+`build:server` compiles TS to `dist/server/*` and copies `convex/_generated`
+into `dist/convex/_generated` so runtime imports resolve without `tsx`.
+
+The Dockerfile is multi-stage and ships only:
+- compiled server output (`dist/`)
+- production dependencies (`npm ci --omit=dev --omit=optional`)
+- a non-root runtime user (`node`)
+
+By default, container deploys set `BOOP_ENABLE_LOCAL_EMBEDDINGS=false` to avoid
+shipping/downloading the 400MB+ local model path. If you want local embeddings
+fallback in production, remove that env var and install optional deps.
+
 To auto-deploy Convex functions whenever you push, install the local git
 pre-push hook once:
 
@@ -525,6 +544,7 @@ boop-agent/
 │   ├── setup.ts                   # Interactive setup CLI
 │   ├── dev.mjs                    # One-command orchestrator (server + convex + vite + ngrok)
 │   ├── preflight.mjs              # Checks convex/_generated exists before booting
+│   ├── copy-convex-generated.mjs  # Copies convex/_generated into dist for prod builds
 │   ├── sendblue-sync.mjs          # Pulls phone number from `sendblue lines`
 │   └── sendblue-webhook.mjs       # Registers inbound webhook via Sendblue CLI
 ├── README.md           ← you are here

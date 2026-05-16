@@ -13,6 +13,7 @@ const VOYAGE_MODEL = "voyage-3";
 const OPENAI_MODEL = "text-embedding-3-large";
 const LOCAL_MODEL = "Xenova/bge-large-en-v1.5";
 const DIMENSIONS = 1024;
+const LOCAL_EMBEDDINGS_ENABLED = process.env.BOOP_ENABLE_LOCAL_EMBEDDINGS !== "false";
 
 // Local pipeline is loaded lazily (model download is ~440MB) and cached
 // in-process. `loading` dedupes parallel callers during the first load.
@@ -27,10 +28,13 @@ export function activeProvider(): EmbeddingProvider {
   return "local";
 }
 
-// Always true now — local is always available. Kept for back-compat with
-// callsites that still gate on it.
+// Returns true when at least one embedding backend is configured/enabled.
 export function embeddingsAvailable(): boolean {
-  return true;
+  return Boolean(
+    process.env.VOYAGE_API_KEY ||
+      process.env.OPENAI_API_KEY ||
+      LOCAL_EMBEDDINGS_ENABLED,
+  );
 }
 
 async function embedVoyage(text: string): Promise<number[]> {
@@ -114,7 +118,13 @@ async function embedLocal(text: string): Promise<number[]> {
 // recall() doesn't pay the ~5–15s model load. Safe to call at server
 // startup — failures are logged, not thrown.
 export function preloadLocalModel(): void {
-  if (process.env.VOYAGE_API_KEY || process.env.OPENAI_API_KEY) return;
+  if (
+    process.env.VOYAGE_API_KEY ||
+    process.env.OPENAI_API_KEY ||
+    !LOCAL_EMBEDDINGS_ENABLED
+  ) {
+    return;
+  }
   getLocalExtractor().catch((err) => {
     console.warn("[embeddings] local model preload failed:", err);
   });
@@ -124,6 +134,7 @@ export async function embed(text: string): Promise<number[] | null> {
   try {
     if (process.env.VOYAGE_API_KEY) return await embedVoyage(text);
     if (process.env.OPENAI_API_KEY) return await embedOpenAI(text);
+    if (!LOCAL_EMBEDDINGS_ENABLED) return null;
     return await embedLocal(text);
   } catch (err) {
     console.warn("[embeddings] failed:", err);
