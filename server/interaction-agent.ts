@@ -285,8 +285,17 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
     conversationId: opts.conversationId,
     limit: 10,
   });
-  const historyBlock = history
-    .slice(0, -1)
+  const priorTurns = history.slice(0, -1);
+  let previousAssistantReply = "";
+  for (let i = priorTurns.length - 1; i >= 0; i--) {
+    const msg = priorTurns[i];
+    if (msg.role !== "assistant") continue;
+    const trimmed = msg.content.trim();
+    if (!trimmed) continue;
+    previousAssistantReply = trimmed;
+    break;
+  }
+  const historyBlock = priorTurns
     .map((m) => `${m.role.toUpperCase()}: ${m.content}`)
     .join("\n");
 
@@ -305,6 +314,7 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
   const turnStart = Date.now();
   const requestedModel = await getRuntimeModel();
   let reply = "";
+  let lastNonEmptyAssistantText = "";
   let usage: UsageTotals = { ...EMPTY_USAGE };
   try {
     for await (const msg of query({
@@ -358,15 +368,10 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
       },
     })) {
       if (msg.type === "assistant") {
-        // Reset `reply` on each new assistant turn so only the LAST turn's
-        // text becomes the user-facing iMessage. Earlier turns are usually
-        // pre-tool-call narration ("Got it — saving that now.") that, if
-        // concatenated with the post-tool-result final text, sends as one
-        // smushed iMessage. Streaming via onThinking still sees everything.
-        reply = "";
+        let turnText = "";
         for (const block of msg.message.content) {
           if (block.type === "text") {
-            reply += block.text;
+            turnText += block.text;
             opts.onThinking?.(block.text);
           } else if (block.type === "tool_use") {
             const name = block.name.replace(/^mcp__boop-[a-z-]+__/, "");
@@ -375,6 +380,10 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
               `tool: ${name}(${inputPreview.length > 90 ? inputPreview.slice(0, 90) + "…" : inputPreview})`,
             );
           }
+        }
+        if (turnText.trim()) {
+          reply = turnText;
+          lastNonEmptyAssistantText = turnText;
         }
       } else if (msg.type === "result") {
         usage = aggregateUsageFromResult(msg, requestedModel);
@@ -395,12 +404,23 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
   // output` or `no output)` with one stray paren from sneaking through.
   const placeholder =
     /^(?:\(\s*no (?:output|reply|response|content)\s*\)|no (?:output|reply|response|content))\.?$/i;
+  const lastTrimmed = lastNonEmptyAssistantText.trim();
+  if (
+    (!reply || placeholder.test(reply)) &&
+    lastTrimmed &&
+    !placeholder.test(lastTrimmed)
+  ) {
+    log("final turn had no text; reusing prior assistant text from this turn");
+    reply = lastTrimmed;
+  }
   if (!reply || placeholder.test(reply)) {
     console.warn(`[turn ${tag}] empty/placeholder reply (${JSON.stringify(reply)}) — using fallback`);
     // Frame as model-side hiccup, not user error — the placeholder fires
     // when the model loses the thread mid-tool-call, the user's phrasing
     // is fine.
-    reply = "Hmm — got tangled up there. Want to try that again?";
+    const defaultFallback = "Hmm — got tangled up there. Want to try that again?";
+    const alternateFallback = "I’m here, but that reply glitched. Can you send that once more?";
+    reply = previousAssistantReply === defaultFallback ? alternateFallback : defaultFallback;
   }
 
   if (usage.costUsd > 0 || usage.inputTokens > 0) {

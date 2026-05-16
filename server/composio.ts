@@ -494,13 +494,10 @@ export async function authorizeToolkit(
     }
   }
 
-  // 2. Initiate the connection. allowMultiple if there's already an active connection
-  //    so we add another account instead of replacing.
-  const existing = (await listConnectedToolkits()).filter(
-    (c) => c.slug === slug && c.status === "ACTIVE",
-  );
-  const conn = await composio.connectedAccounts.initiate(boopUserId(), authConfigId, {
-    ...(existing.length > 0 ? { allowMultiple: true } : {}),
+  // 2. Create a connect link session. Composio now routes managed OAuth
+  //    through `/api/v3/connected_accounts/link` (the old create/initiate
+  //    endpoint returns 400 with a suggested_fix pointing here).
+  const conn = await composio.connectedAccounts.link(boopUserId(), authConfigId, {
     ...(opts?.callbackUrl ? { callbackUrl: opts.callbackUrl } : {}),
     ...(opts?.alias ? { alias: opts.alias } : {}),
   });
