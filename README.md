@@ -198,26 +198,14 @@ If deploy fails, push is blocked. To skip once:
 SKIP_CONVEX_DEPLOY=1 git push
 ```
 
-`npm run start` now supports an env-driven bootstrap path:
+Startup does not run `convex dev` automatically. Keep generated types in git:
 
 ```bash
-BOOP_AUTO_CONVEX_SETUP=true
-CONVEX_DEPLOY_KEY=<your_deploy_key>
-# optional if your key is project-scoped:
-CONVEX_DEPLOYMENT=dev:your-deployment-name
+convex/_generated/*
 ```
 
-When `BOOP_AUTO_CONVEX_SETUP=true`, startup now fails fast unless at least one
-of `CONVEX_DEPLOY_KEY` or `CONVEX_DEPLOYMENT` is set (to prevent accidental
-anonymous/local deployment selection in non-interactive environments).
-
-When `_generated` is missing, preflight will run:
-
-```bash
-npx convex dev --once --typecheck disable --tail-logs disable
-```
-
-This generates `convex/_generated/` non-interactively and then boots the server.
+If `_generated` is missing, preflight exits and asks you to run
+`npm run deploy:convex` or `npx convex codegen`, then commit the result.
 
 ---
 

@@ -17,8 +17,8 @@ if (!existsSync(resolve(root, "convex/_generated/api.js"))) {
 │  Convex types haven't been generated yet.                   │
 │                                                             │
 │  Run this first:                                            │
-│    npm run setup           (full interactive setup)         │
-│    npx convex dev --once   (just generate types)            │
+│    npm run deploy:convex   (recommended)                    │
+│    npx convex codegen      (types only)                     │
 └─────────────────────────────────────────────────────────────┘
 `);
   process.exit(1);
