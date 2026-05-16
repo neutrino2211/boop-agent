@@ -176,7 +176,27 @@ Text your Sendblue-provisioned number from a **different** phone. The agent repl
 
 ## Cloud / Docker deployments
 
-`convex/_generated/` is gitignored in this repo, so cloud builds from Git won't include it by default.
+`convex/_generated/` is checked into git in this repo, so cloud builds from Git
+already include generated Convex types.
+
+To auto-deploy Convex functions whenever you push, install the local git
+pre-push hook once:
+
+```bash
+npm run hooks:install
+```
+
+The hook runs:
+
+```bash
+npx convex deploy --typecheck disable --codegen enable
+```
+
+If deploy fails, push is blocked. To skip once:
+
+```bash
+SKIP_CONVEX_DEPLOY=1 git push
+```
 
 `npm run start` now supports an env-driven bootstrap path:
 

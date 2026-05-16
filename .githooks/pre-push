@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${SKIP_CONVEX_DEPLOY:-}" = "1" ]; then
+  echo "[pre-push] SKIP_CONVEX_DEPLOY=1 set; skipping Convex deploy."
+  exit 0
+fi
+
+if [ "${CI:-}" = "true" ]; then
+  echo "[pre-push] CI environment detected; skipping local pre-push deploy."
+  exit 0
+fi
+
+if ! command -v npx >/dev/null 2>&1; then
+  echo "[pre-push] npx is required to run convex deploy."
+  exit 1
+fi
+
+if [ -z "${CONVEX_DEPLOY_KEY:-}" ] && [ -z "${CONVEX_DEPLOYMENT:-}" ]; then
+  cat <<'EOF'
+[pre-push] Missing Convex deployment configuration.
+Set at least one of:
+  - CONVEX_DEPLOY_KEY
+  - CONVEX_DEPLOYMENT (e.g. dev:my-deployment)
+EOF
+  exit 1
+fi
+
+echo "[pre-push] Running: npx convex deploy --typecheck disable --codegen enable"
+npx convex deploy --typecheck disable --codegen enable
+echo "[pre-push] Convex deploy succeeded."

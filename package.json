@@ -6,6 +6,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "hooks:install": "node scripts/install-git-hooks.mjs",
     "setup": "tsx scripts/setup.ts",
     "sendblue:sync": "node scripts/sendblue-sync.mjs",
     "sendblue:webhook": "node scripts/sendblue-webhook.mjs",
