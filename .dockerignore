@@ -12,3 +12,17 @@ npm-debug.log
 # local runtime artifacts
 debug/dist
 dist
+
+# docs / local-only project context not needed at runtime
+.agents
+.claude
+assets
+debug
+ARCHITECTURE.md
+CHANGELOG.md
+CLAUDE.md
+CONTRIBUTING.md
+INTEGRATIONS.md
+README.md
+AGENTS.md
+skills-lock.json
