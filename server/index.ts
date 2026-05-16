@@ -2,6 +2,9 @@ import "./env-setup.js";
 import express from "express";
 import cors from "cors";
 import { createServer } from "node:http";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { addClient } from "./broadcast.js";
 import { createSendblueRouter } from "./sendblue.js";
@@ -20,6 +23,11 @@ import { createMemoryRouter } from "./memory-routes.js";
 function parsePositiveMs(raw: string | undefined, fallback: number): number {
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function firstParam(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) return value[0];
+  return value;
 }
 
 const INTEGRATIONS_BOOT_TIMEOUT_MS = parsePositiveMs(
@@ -49,6 +57,23 @@ function withTimeout<T>(
   return Promise.race([promise, timeoutPromise]).finally(() => {
     if (timeout) clearTimeout(timeout);
   });
+}
+
+function resolveDebugUiDir(): string | null {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    // Compiled runtime path (dist/server/index.js -> dist/debug).
+    resolve(here, "..", "debug"),
+    // Source runtime path (server/index.ts -> debug/dist).
+    resolve(here, "..", "debug", "dist"),
+    // Fallback when compiled output lives under dist/server and debug build
+    // lives at project-root/debug/dist.
+    resolve(here, "..", "..", "debug", "dist"),
+  ];
+  for (const dir of candidates) {
+    if (existsSync(resolve(dir, "index.html"))) return dir;
+  }
+  return null;
 }
 
 async function main() {
@@ -114,15 +139,17 @@ async function main() {
   }
 
   const app = express();
+  const api = express.Router();
   app.use(cors());
   // Composio webhook receiver must read raw bytes for HMAC verification, so
   // its body parser is mounted BEFORE the global express.json. Without this
   // ordering the JSON parser consumes the stream first and the raw buffer
   // arrives empty.
   app.use("/composio/webhook", express.raw({ type: "application/json", limit: "2mb" }));
+  app.use("/api/composio/webhook", express.raw({ type: "application/json", limit: "2mb" }));
   app.use(express.json({ limit: "2mb" }));
 
-  app.get("/health", (_req, res) => {
+  const healthHandler: express.RequestHandler = (_req, res) => {
     res.json({
       ok: true,
       service: "boop-agent",
@@ -131,18 +158,34 @@ async function main() {
       integrationsLoaded: listIntegrations().length,
       integrationsLastError,
     });
-  });
+  };
+  app.get("/health", healthHandler);
+  api.get("/health", healthHandler);
 
-  app.use("/sendblue", createSendblueRouter());
-  app.use("/composio", createComposioRouter());
-  app.use("/memory", createMemoryRouter());
+  const sendblueRouter = createSendblueRouter();
+  const composioRouter = createComposioRouter();
+  const memoryRouter = createMemoryRouter();
 
-  app.post("/agents/:id/cancel", (req, res) => {
-    const ok = cancelAgent(req.params.id);
+  app.use("/sendblue", sendblueRouter);
+  app.use("/composio", composioRouter);
+  app.use("/memory", memoryRouter);
+  api.use("/sendblue", sendblueRouter);
+  api.use("/composio", composioRouter);
+  api.use("/memory", memoryRouter);
+
+  const cancelHandler: express.RequestHandler = (req, res) => {
+    const id = firstParam(req.params.id);
+    if (!id) {
+      res.status(400).json({ error: "agent id required" });
+      return;
+    }
+    const ok = cancelAgent(id);
     res.json({ ok });
-  });
+  };
+  app.post("/agents/:id/cancel", cancelHandler);
+  api.post("/agents/:id/cancel", cancelHandler);
 
-  app.post("/consolidate", async (_req, res) => {
+  const consolidateHandler: express.RequestHandler = async (_req, res) => {
     try {
       const { runConsolidation } = await import("./consolidation.js");
       // Fire-and-forget so the HTTP request returns immediately.
@@ -153,19 +196,28 @@ async function main() {
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
-  });
+  };
+  app.post("/consolidate", consolidateHandler);
+  api.post("/consolidate", consolidateHandler);
 
-  app.post("/agents/:id/retry", async (req, res) => {
-    const result = await retryAgent(req.params.id);
+  const retryHandler: express.RequestHandler = async (req, res) => {
+    const id = firstParam(req.params.id);
+    if (!id) {
+      res.status(400).json({ error: "agent id required" });
+      return;
+    }
+    const result = await retryAgent(id);
     if (!result) {
       res.status(404).json({ error: "agent not found" });
       return;
     }
     res.json(result);
-  });
+  };
+  app.post("/agents/:id/retry", retryHandler);
+  api.post("/agents/:id/retry", retryHandler);
 
   // Chat endpoint for local testing and the debug dashboard
-  app.post("/chat", async (req, res) => {
+  const chatHandler: express.RequestHandler = async (req, res) => {
     const { conversationId, content } = req.body ?? {};
     if (!conversationId || !content) {
       res.status(400).json({ error: "conversationId and content required" });
@@ -178,7 +230,37 @@ async function main() {
       console.error(err);
       res.status(500).json({ error: String(err) });
     }
-  });
+  };
+  app.post("/chat", chatHandler);
+  api.post("/chat", chatHandler);
+
+  const debugConfigHandler: express.RequestHandler = (_req, res) => {
+    const convexUrl = process.env.VITE_CONVEX_URL?.trim() || process.env.CONVEX_URL?.trim() || "";
+    res.json({ convexUrl });
+  };
+  api.get("/debug/config", debugConfigHandler);
+
+  app.use("/api", api);
+
+  const debugUiDir = resolveDebugUiDir();
+  if (debugUiDir) {
+    app.use("/assets", express.static(resolve(debugUiDir, "assets"), { maxAge: "1y", immutable: true }));
+    app.use("/debug", express.static(debugUiDir, { index: false, redirect: false }));
+    app.get("/", (_req, res) => {
+      res.redirect(302, "/debug");
+    });
+    const sendDebugIndex: express.RequestHandler = (_req, res) => {
+      res.sendFile(resolve(debugUiDir, "index.html"));
+    };
+    app.get("/debug", sendDebugIndex);
+    app.get("/debug/", sendDebugIndex);
+    console.log(`[debug] serving UI from ${debugUiDir} at /debug`);
+  } else {
+    app.get("/", (_req, res) => {
+      res.type("text/plain").send("boop-agent running (debug UI not built)");
+    });
+    console.log("[debug] UI assets not found; run `npm run build:debug` to enable /debug");
+  }
 
   const server = createServer(app);
   const wss = new WebSocketServer({ server, path: "/ws" });
@@ -191,9 +273,12 @@ async function main() {
   server.listen(port, () => {
     console.log(`boop-agent server listening on :${port}`);
     console.log(`  health      GET  http://localhost:${port}/health`);
+    console.log(`  health (api)GET  http://localhost:${port}/api/health`);
     console.log(`  chat        POST http://localhost:${port}/chat`);
+    console.log(`  chat (api)  POST http://localhost:${port}/api/chat`);
     console.log(`  sendblue    POST http://localhost:${port}/sendblue/webhook`);
     console.log(`  websocket   WS   ws://localhost:${port}/ws`);
+    console.log(`  debug UI    GET  http://localhost:${port}/debug`);
   });
 
   let shuttingDown = false;

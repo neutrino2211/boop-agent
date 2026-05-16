@@ -9,7 +9,7 @@ RUN --mount=type=cache,target=/root/.npm \
 FROM deps AS build
 WORKDIR /app
 COPY . .
-RUN npm run build:server
+RUN npm run build:server && npm run build:debug
 
 FROM node:22-bookworm-slim AS prod-deps
 WORKDIR /app
@@ -23,6 +23,7 @@ ENV NODE_ENV=production
 ENV BOOP_ENABLE_LOCAL_EMBEDDINGS=false
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/debug/dist ./dist/debug
 COPY package*.json ./
 EXPOSE 3456
 USER node
