@@ -3,6 +3,9 @@ import { useSocket } from "../lib/useSocket.js";
 
 interface Status {
   provider: "voyage" | "openai" | "local";
+  embeddingsAvailable: boolean;
+  localEmbeddingsEnabled: boolean;
+  localEmbeddingsDisabledReason: string | null;
   total: number;
   withEmbedding: number;
   withoutEmbedding: number;
@@ -87,12 +90,18 @@ export function EmbeddingBanner({ isDark }: { isDark: boolean }) {
   if (!status) return null;
 
   const isStale = status.withoutEmbedding > 0;
-  const showBanner = isStale || busy || errorMsg;
+  const embeddingsDisabled = !status.embeddingsAvailable;
+  const showBanner = isStale || busy || errorMsg || embeddingsDisabled;
   if (!showBanner) return null;
 
-  const tone = isStale && !busy ? "warn" : "info";
+  const tone =
+    embeddingsDisabled || errorMsg ? "error" : isStale && !busy ? "warn" : "info";
   const bg =
-    tone === "warn"
+    tone === "error"
+      ? isDark
+        ? "bg-rose-500/10 border-rose-500/30"
+        : "bg-rose-50 border-rose-200"
+      : tone === "warn"
       ? isDark
         ? "bg-amber-500/10 border-amber-500/30"
         : "bg-amber-50 border-amber-200"
@@ -109,6 +118,15 @@ export function EmbeddingBanner({ isDark }: { isDark: boolean }) {
     detail = progress
       ? `Embedded ${progress.embedded}${progress.failed ? ` · ${progress.failed} failed` : ""}.`
       : "Starting…";
+  } else if (embeddingsDisabled) {
+    title = "Embeddings are disabled";
+    detail =
+      `No embedding backend is enabled. ` +
+      `Enable local embeddings in Settings → AI providers (Local embeddings card), ` +
+      `or set a paid embedding key. ` +
+      (status.localEmbeddingsDisabledReason
+        ? `Current local status: ${status.localEmbeddingsDisabledReason}.`
+        : "");
   } else if (isStale) {
     title = `${status.withoutEmbedding} of ${status.total} memories have no embedding`;
     detail = `Semantic recall can't find them — falls back to literal substring matching. Re-embed via ${PROVIDER_LABEL[status.provider]} to fix.`;
@@ -124,7 +142,7 @@ export function EmbeddingBanner({ isDark }: { isDark: boolean }) {
           <div className={`text-sm font-medium ${heading}`}>{title}</div>
           <div className={`text-xs mt-1 ${body}`}>{detail}</div>
         </div>
-        {!busy && isStale && (
+        {!busy && isStale && !embeddingsDisabled && (
           <button
             onClick={reembed}
             className={`shrink-0 text-xs px-3 py-1.5 rounded-md border transition ${

@@ -23,6 +23,7 @@ function envEnabled(name: string, defaultValue = true): boolean {
 const BGE_MODEL_ENABLED = envEnabled("BOOP_ENABLE_BGE_MODEL", true);
 const LOCAL_EMBEDDINGS_ENABLED =
   BGE_MODEL_ENABLED && envEnabled("BOOP_ENABLE_LOCAL_EMBEDDINGS", true);
+let warnedLocalDisabled = false;
 
 // Local pipeline is loaded lazily (model download is ~440MB) and cached
 // in-process. `loading` dedupes parallel callers during the first load.
@@ -32,18 +33,30 @@ let loading: Promise<FeatureExtractionPipeline> | null = null;
 export type EmbeddingProvider = "voyage" | "openai" | "local";
 
 export function activeProvider(): EmbeddingProvider {
-  if (process.env.VOYAGE_API_KEY) return "voyage";
-  if (process.env.OPENAI_API_KEY) return "openai";
+  if (process.env.VOYAGE_API_KEY?.trim()) return "voyage";
+  if (process.env.OPENAI_API_KEY?.trim()) return "openai";
   return "local";
 }
 
 // Returns true when at least one embedding backend is configured/enabled.
 export function embeddingsAvailable(): boolean {
   return Boolean(
-    process.env.VOYAGE_API_KEY ||
-      process.env.OPENAI_API_KEY ||
+    process.env.VOYAGE_API_KEY?.trim() ||
+      process.env.OPENAI_API_KEY?.trim() ||
       LOCAL_EMBEDDINGS_ENABLED,
   );
+}
+
+export function localEmbeddingsEnabled(): boolean {
+  return LOCAL_EMBEDDINGS_ENABLED;
+}
+
+export function localEmbeddingsDisabledReason(): string | null {
+  if (LOCAL_EMBEDDINGS_ENABLED) return null;
+  if (!BGE_MODEL_ENABLED) {
+    return "BOOP_ENABLE_BGE_MODEL is false";
+  }
+  return "BOOP_ENABLE_LOCAL_EMBEDDINGS is false";
 }
 
 async function embedVoyage(text: string): Promise<number[]> {
@@ -128,8 +141,8 @@ async function embedLocal(text: string): Promise<number[]> {
 // startup — failures are logged, not thrown.
 export function preloadLocalModel(): void {
   if (
-    process.env.VOYAGE_API_KEY ||
-    process.env.OPENAI_API_KEY ||
+    process.env.VOYAGE_API_KEY?.trim() ||
+    process.env.OPENAI_API_KEY?.trim() ||
     !LOCAL_EMBEDDINGS_ENABLED
   ) {
     return;
@@ -141,9 +154,17 @@ export function preloadLocalModel(): void {
 
 export async function embed(text: string): Promise<number[] | null> {
   try {
-    if (process.env.VOYAGE_API_KEY) return await embedVoyage(text);
-    if (process.env.OPENAI_API_KEY) return await embedOpenAI(text);
-    if (!LOCAL_EMBEDDINGS_ENABLED) return null;
+    if (process.env.VOYAGE_API_KEY?.trim()) return await embedVoyage(text);
+    if (process.env.OPENAI_API_KEY?.trim()) return await embedOpenAI(text);
+    if (!LOCAL_EMBEDDINGS_ENABLED) {
+      if (!warnedLocalDisabled) {
+        warnedLocalDisabled = true;
+        console.warn(
+          `[embeddings] local embeddings disabled (${localEmbeddingsDisabledReason() ?? "disabled"})`,
+        );
+      }
+      return null;
+    }
     return await embedLocal(text);
   } catch (err) {
     console.warn("[embeddings] failed:", err);

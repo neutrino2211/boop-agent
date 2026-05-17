@@ -1,7 +1,13 @@
 import express from "express";
 import { convex } from "./convex-client.js";
 import { api } from "../convex/_generated/api.js";
-import { embed, activeProvider } from "./embeddings.js";
+import {
+  embed,
+  activeProvider,
+  embeddingsAvailable,
+  localEmbeddingsDisabledReason,
+  localEmbeddingsEnabled,
+} from "./embeddings.js";
 import { broadcast } from "./broadcast.js";
 
 // One in-flight re-embed at a time. Re-embedding twice in parallel just
@@ -76,6 +82,9 @@ export function createMemoryRouter(): express.Router {
       const stats = await convex.query(api.memoryRecords.embeddingStats, {});
       res.json({
         provider: activeProvider(),
+        embeddingsAvailable: embeddingsAvailable(),
+        localEmbeddingsEnabled: localEmbeddingsEnabled(),
+        localEmbeddingsDisabledReason: localEmbeddingsDisabledReason(),
         running: Boolean(runningReembed),
         ...stats,
       });
@@ -87,6 +96,14 @@ export function createMemoryRouter(): express.Router {
   });
 
   router.post("/reembed", async (_req, res) => {
+    if (!embeddingsAvailable()) {
+      res.status(400).json({
+        error:
+          "No embedding backend is enabled. Set VOYAGE_API_KEY or OPENAI_API_KEY, " +
+          "or enable BOOP_ENABLE_BGE_MODEL/BOOP_ENABLE_LOCAL_EMBEDDINGS.",
+      });
+      return;
+    }
     if (runningReembed) {
       res.status(409).json({ error: "re-embed already in progress" });
       return;

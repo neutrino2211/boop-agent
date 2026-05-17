@@ -18,6 +18,11 @@ interface ProviderConfigSnapshot {
 
 const OPENAI_FORMAT_APIS = new Set(["openai-completions", "openai-responses"]);
 const RUNTIME_REASONING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+const EMBEDDING_ENV_KEYS = [
+  "BOOP_ENABLE_BGE_MODEL",
+  "BOOP_ENABLE_LOCAL_EMBEDDINGS",
+  "BOOP_PRELOAD_LOCAL_EMBEDDINGS",
+] as const;
 
 const PROVIDER_FIELDS: Record<string, string[]> = {
   "azure-openai-responses": [
@@ -155,11 +160,39 @@ const FIELD_META: Record<
     placeholder: "CLOUDFLARE_GATEWAY_ID",
     description: "Required for Cloudflare AI Gateway.",
   },
+  BOOP_ENABLE_BGE_MODEL: {
+    label: "Enable BGE model",
+    placeholder: "true",
+    description:
+      "When false, disables local BGE model entirely (no pull, no local embedding fallback).",
+  },
+  BOOP_ENABLE_LOCAL_EMBEDDINGS: {
+    label: "Enable local embeddings",
+    placeholder: "true",
+    description:
+      "When false, local embedding fallback is disabled even if BGE model is enabled.",
+  },
+  BOOP_PRELOAD_LOCAL_EMBEDDINGS: {
+    label: "Preload local embeddings",
+    placeholder: "true",
+    description:
+      "When true, server preloads BGE model at startup (recommended in dev; often off in prod).",
+  },
 };
 
 function trimmedOrNull(value: string): string | null {
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
+}
+
+function envToggleValue(
+  draftOverrides: Record<string, string>,
+  key: string,
+  defaultEnabled: boolean,
+): "true" | "false" {
+  const raw = draftOverrides[key];
+  if (raw === undefined || raw.trim() === "") return defaultEnabled ? "true" : "false";
+  return raw.trim().toLowerCase() === "false" ? "false" : "true";
 }
 
 function isSensitiveField(envKey: string): boolean {
@@ -290,6 +323,14 @@ export function ProviderSettingsSection({ isDark }: { isDark: boolean }) {
     .map((provider) => provider.recommendedModel)
     .filter((value): value is string => Boolean(value))
     .slice(0, 6);
+
+  const bgeEnabled = envToggleValue(draftOverrides, "BOOP_ENABLE_BGE_MODEL", true);
+  const localEmbEnabled = envToggleValue(draftOverrides, "BOOP_ENABLE_LOCAL_EMBEDDINGS", true);
+  const preloadLocalEmb = envToggleValue(
+    draftOverrides,
+    "BOOP_PRELOAD_LOCAL_EMBEDDINGS",
+    true,
+  );
 
   return (
     <div className={`border rounded-xl p-4 fade-in ${cardBg}`}>
@@ -435,6 +476,110 @@ export function ProviderSettingsSection({ isDark }: { isDark: boolean }) {
             >
               {busy === "reasoning" ? "Saving..." : "Save"}
             </button>
+          </div>
+        </div>
+
+        <div className={`mt-4 border-t pt-3 ${isDark ? "border-slate-800/60" : "border-slate-200/60"}`}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className={`text-xs font-semibold uppercase tracking-wider ${faint}`}>
+                Local embeddings (BGE)
+              </div>
+              <div className={`text-xs mt-1 ${muted}`}>
+                Controls local semantic embedding fallback used for memory recall and re-embed.
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+            <label className="flex flex-col gap-1">
+              <span className={`text-[11px] ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                Enable BGE model
+              </span>
+              <select
+                value={bgeEnabled}
+                onChange={(e) =>
+                  setDraftOverrides((prev) => ({ ...prev, BOOP_ENABLE_BGE_MODEL: e.target.value }))
+                }
+                className={`text-xs px-2.5 py-2 border rounded-md mono ${inputBg}`}
+                disabled={loading || busy !== null}
+              >
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className={`text-[11px] ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                Enable local embeddings
+              </span>
+              <select
+                value={localEmbEnabled}
+                onChange={(e) =>
+                  setDraftOverrides((prev) => ({
+                    ...prev,
+                    BOOP_ENABLE_LOCAL_EMBEDDINGS: e.target.value,
+                  }))
+                }
+                className={`text-xs px-2.5 py-2 border rounded-md mono ${inputBg}`}
+                disabled={loading || busy !== null}
+              >
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className={`text-[11px] ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                Preload local model
+              </span>
+              <select
+                value={preloadLocalEmb}
+                onChange={(e) =>
+                  setDraftOverrides((prev) => ({
+                    ...prev,
+                    BOOP_PRELOAD_LOCAL_EMBEDDINGS: e.target.value,
+                  }))
+                }
+                className={`text-xs px-2.5 py-2 border rounded-md mono ${inputBg}`}
+                disabled={loading || busy !== null}
+              >
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </label>
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              onClick={() =>
+                void persist(
+                  {
+                    envOverrides: Object.fromEntries(
+                      EMBEDDING_ENV_KEYS.map((key) => [key, trimmedOrNull(draftOverrides[key] ?? "")]),
+                    ),
+                  },
+                  "embeddings",
+                  "Embedding runtime flags saved.",
+                )}
+              disabled={loading || busy !== null}
+              className={`text-xs px-3 py-2 rounded-md disabled:opacity-50 ${primaryBtn}`}
+            >
+              {busy === "embeddings" ? "Saving..." : "Save embedding flags"}
+            </button>
+            <button
+              onClick={() =>
+                void persist(
+                  {
+                    envOverrides: Object.fromEntries(EMBEDDING_ENV_KEYS.map((key) => [key, null])),
+                  },
+                  "embeddings:clear",
+                  "Embedding runtime flags cleared (defaults apply).",
+                )}
+              disabled={loading || busy !== null}
+              className={`text-xs px-2.5 py-2 rounded-md disabled:opacity-50 ${subtleBtn}`}
+            >
+              Clear
+            </button>
+          </div>
+          <div className={`text-[10px] mt-2 ${faint}`}>
+            In Docker runtime, defaults are often disabled unless explicitly overridden here.
           </div>
         </div>
       </div>
