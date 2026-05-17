@@ -4,7 +4,8 @@
  * Convex vector index stays compatible regardless of which provider runs.
  *
  * Local fallback ensures `recall()` always works — no API key required.
- * First local call downloads ~440MB and caches in ~/.cache/huggingface.
+ * First local call downloads ~440MB and caches in BOOP_EMBEDDINGS_CACHE_DIR
+ * (default /tmp/boop-embeddings-cache).
  */
 
 import type { FeatureExtractionPipeline } from "@huggingface/transformers";
@@ -46,6 +47,17 @@ let warnedLocalDisabled = false;
 // in-process. `loading` dedupes parallel callers during the first load.
 let extractor: FeatureExtractionPipeline | null = null;
 let loading: Promise<FeatureExtractionPipeline> | null = null;
+
+function isPermissionError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const code = "code" in err ? String((err as { code?: unknown }).code) : "";
+  const message = "message" in err ? String((err as { message?: unknown }).message) : "";
+  return (
+    code === "EACCES" ||
+    code === "EPERM" ||
+    /permission denied|eacces|eperm/i.test(message)
+  );
+}
 
 export type EmbeddingProvider = "voyage" | "openai" | "local";
 
@@ -126,12 +138,31 @@ async function getLocalExtractor(): Promise<FeatureExtractionPipeline> {
     env.cacheDir = LOCAL_CACHE_DIR;
     env.useFSCache = true;
     env.useBrowserCache = false;
+    env.useWasmCache = false;
     console.log(`[embeddings] loading local model ${LOCAL_MODEL} (~440MB on first run)…`);
     console.log(`[embeddings] cache dir: ${LOCAL_CACHE_DIR}`);
     const start = Date.now();
-    const ext = await pipeline("feature-extraction", LOCAL_MODEL, {
-      dtype: "fp32",
-    });
+    let ext: FeatureExtractionPipeline;
+    try {
+      ext = await pipeline("feature-extraction", LOCAL_MODEL, {
+        dtype: "fp32",
+        cache_dir: LOCAL_CACHE_DIR,
+      });
+    } catch (err) {
+      // Some runtimes still resolve internal cache writes under node_modules
+      // despite env/cache_dir overrides. Fall back to in-memory downloads so
+      // embeddings still work instead of hard-failing on EACCES/EPERM.
+      if (!isPermissionError(err)) throw err;
+      console.warn(
+        "[embeddings] local cache write blocked; retrying with disk cache disabled:",
+        err,
+      );
+      env.useFSCache = false;
+      ext = await pipeline("feature-extraction", LOCAL_MODEL, {
+        dtype: "fp32",
+        cache_dir: undefined,
+      });
+    }
     console.log(`[embeddings] local model ready in ${Date.now() - start}ms`);
     extractor = ext;
     return ext;
