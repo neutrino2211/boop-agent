@@ -21,6 +21,7 @@ FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV BOOP_ENABLE_LOCAL_EMBEDDINGS=false
+ENV BOOP_ENABLE_BGE_MODEL=false
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/debug/dist ./dist/debug

@@ -20,11 +20,7 @@ import {
   setRuntimeReasoningLevel,
   setRuntimeModel,
 } from "./runtime-config.js";
-import {
-  bestConfiguredModel,
-  modelStatus,
-  normalizeModelOrDefault,
-} from "./model-config.js";
+import { normalizeModelOrDefault } from "./model-config.js";
 import {
   describeUserNow,
   getStoredUserTimezone,
@@ -47,17 +43,10 @@ export function createSelfMcp() {
           const activeModel = await getRuntimeModel();
           const reasoningLevel = await getRuntimeReasoningLevel();
           const envModel = normalizeModelOrDefault(process.env.BOOP_MODEL ?? DEFAULT_MODEL);
-          const activeStatus = modelStatus(activeModel);
-          const envStatus = modelStatus(envModel);
           const config = {
             model: activeModel,
             reasoningLevel,
-            modelReady: activeStatus.ok,
-            modelIssue: activeStatus.reason ?? null,
             envDefault: envModel,
-            envDefaultReady: envStatus.ok,
-            envDefaultIssue: envStatus.reason ?? null,
-            bestConfiguredModel: bestConfiguredModel([process.env.BOOP_MODEL, DEFAULT_MODEL]),
             availableModels: [...KNOWN_MODELS],
             availableReasoningLevels: [...RUNTIME_REASONING_LEVELS],
             userTimezone: tzInfo.isExplicit ? tzInfo.timezone : null,

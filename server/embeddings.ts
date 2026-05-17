@@ -13,7 +13,16 @@ const VOYAGE_MODEL = "voyage-3";
 const OPENAI_MODEL = "text-embedding-3-large";
 const LOCAL_MODEL = "Xenova/bge-large-en-v1.5";
 const DIMENSIONS = 1024;
-const LOCAL_EMBEDDINGS_ENABLED = process.env.BOOP_ENABLE_LOCAL_EMBEDDINGS !== "false";
+
+function envEnabled(name: string, defaultValue = true): boolean {
+  const raw = process.env[name];
+  if (raw === undefined) return defaultValue;
+  return raw !== "false";
+}
+
+const BGE_MODEL_ENABLED = envEnabled("BOOP_ENABLE_BGE_MODEL", true);
+const LOCAL_EMBEDDINGS_ENABLED =
+  BGE_MODEL_ENABLED && envEnabled("BOOP_ENABLE_LOCAL_EMBEDDINGS", true);
 
 // Local pipeline is loaded lazily (model download is ~440MB) and cached
 // in-process. `loading` dedupes parallel callers during the first load.

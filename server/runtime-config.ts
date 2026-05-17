@@ -1,11 +1,9 @@
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import {
-  bestConfiguredModel,
   DEFAULT_MODEL,
   KNOWN_MODELS,
   MODEL_ALIASES,
-  modelStatus,
   normalizeModelOrDefault,
   resolveModelInput,
 } from "./model-config.js";
@@ -60,29 +58,9 @@ export async function getRuntimeModel(): Promise<string> {
   // settings table is also writable via the Convex dashboard and other
   // mutations, and a bad value here would surface as an opaque provider 4xx on
   // the next turn instead of falling back gracefully.
-  const preferred = stored ? normalizeModelOrDefault(stored) : envFallback();
-  const status = modelStatus(preferred);
-  if (status.ok) {
-    cachedModel = { at: Date.now(), value: preferred };
-    return preferred;
-  }
-
-  const fallback = bestConfiguredModel([process.env.BOOP_MODEL, DEFAULT_MODEL]);
-  if (fallback && fallback !== preferred) {
-    console.warn(
-      `[runtime-config] selected model "${preferred}" is unavailable (${status.reason}); using "${fallback}"`,
-    );
-    cachedModel = { at: Date.now(), value: fallback };
-    return fallback;
-  }
-
-  // Keep the preferred model so downstream errors are explicit if nothing else
-  // is configured. This prevents silently masking missing provider settings.
-  console.warn(
-    `[runtime-config] selected model "${preferred}" is unavailable (${status.reason}); no configured fallback found`,
-  );
-  cachedModel = { at: Date.now(), value: preferred };
-  return preferred;
+  const final = stored ? normalizeModelOrDefault(stored) : envFallback();
+  cachedModel = { at: Date.now(), value: final };
+  return final;
 }
 
 export async function setRuntimeModel(model: string): Promise<void> {

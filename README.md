@@ -195,9 +195,10 @@ The Dockerfile is multi-stage and ships only:
 - production dependencies (`npm ci --omit=dev --omit=optional`)
 - a non-root runtime user (`node`)
 
-By default, container deploys set `BOOP_ENABLE_LOCAL_EMBEDDINGS=false` to avoid
-shipping/downloading the 400MB+ local model path. If you want local embeddings
-fallback in production, remove that env var and install optional deps.
+By default, container deploys set `BOOP_ENABLE_LOCAL_EMBEDDINGS=false` and
+`BOOP_ENABLE_BGE_MODEL=false` to avoid shipping/downloading the 400MB+ local
+model path. If you want local embeddings fallback in production, enable those
+env vars and install optional deps.
 
 When running in Docker, open the debug dashboard at:
 
