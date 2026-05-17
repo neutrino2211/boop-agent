@@ -9,11 +9,14 @@
 
 import type { FeatureExtractionPipeline } from "@huggingface/transformers";
 import { createRequire } from "node:module";
+import { mkdir } from "node:fs/promises";
 
 const VOYAGE_MODEL = "voyage-3";
 const OPENAI_MODEL = "text-embedding-3-large";
 const LOCAL_MODEL = "Xenova/bge-large-en-v1.5";
 const DIMENSIONS = 1024;
+const LOCAL_CACHE_DIR =
+  process.env.BOOP_EMBEDDINGS_CACHE_DIR?.trim() || "/tmp/boop-embeddings-cache";
 const require = createRequire(import.meta.url);
 
 function hasTransformersPackage(): boolean {
@@ -116,8 +119,15 @@ async function getLocalExtractor(): Promise<FeatureExtractionPipeline> {
   if (extractor) return extractor;
   if (loading) return loading;
   const attempt = (async () => {
-    const { pipeline } = await import("@huggingface/transformers");
+    const { pipeline, env } = await import("@huggingface/transformers");
+    // Default transformers.js cache path is relative to its own package dir
+    // (under node_modules), which is read-only in our runtime container.
+    await mkdir(LOCAL_CACHE_DIR, { recursive: true });
+    env.cacheDir = LOCAL_CACHE_DIR;
+    env.useFSCache = true;
+    env.useBrowserCache = false;
     console.log(`[embeddings] loading local model ${LOCAL_MODEL} (~440MB on first run)…`);
+    console.log(`[embeddings] cache dir: ${LOCAL_CACHE_DIR}`);
     const start = Date.now();
     const ext = await pipeline("feature-extraction", LOCAL_MODEL, {
       dtype: "fp32",

@@ -22,6 +22,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV BOOP_ENABLE_LOCAL_EMBEDDINGS=false
 ENV BOOP_ENABLE_BGE_MODEL=false
+ENV BOOP_EMBEDDINGS_CACHE_DIR=/tmp/boop-embeddings-cache
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/debug/dist ./dist/debug

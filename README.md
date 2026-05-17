@@ -200,6 +200,10 @@ By default, container deploys set `BOOP_ENABLE_LOCAL_EMBEDDINGS=false` and
 model path. If you want local embeddings fallback in production, enable those
 env vars.
 
+When local embeddings are enabled, Transformers.js cache/model files are stored
+in `BOOP_EMBEDDINGS_CACHE_DIR` (default `/tmp/boop-embeddings-cache`) to avoid
+permission issues writing under `node_modules` in read-only runtime images.
+
 When running in Docker, open the debug dashboard at:
 
 ```text
