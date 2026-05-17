@@ -1,9 +1,11 @@
 import { getModels, type KnownProvider } from "@earendil-works/pi-ai";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
+import { resolveReasoningInput, type RuntimeReasoningLevel } from "./runtime-config.js";
 
 const ENV_OVERRIDE_PREFIX = "env_override.";
 const MODEL_KEY = "model";
+const REASONING_KEY = "reasoning";
 
 export const PROVIDER_ENV_KEYS = [
   "AZURE_OPENAI_API_KEY",
@@ -190,6 +192,7 @@ export function isProviderEnvKey(key: string): key is ProviderEnvKey {
 
 export interface ProviderConfigSnapshot {
   modelOverride: string | null;
+  reasoningOverride: RuntimeReasoningLevel | null;
   envOverrides: Record<ProviderEnvKey, string | null>;
   providers: Array<{
     provider: string;
@@ -256,6 +259,8 @@ export async function updateProviderEnvOverrides(
 
 export async function getProviderConfigSnapshot(): Promise<ProviderConfigSnapshot> {
   const modelOverride = await getSettingValue(MODEL_KEY);
+  const storedReasoning = await getSettingValue(REASONING_KEY);
+  const reasoningOverride = storedReasoning ? resolveReasoningInput(storedReasoning) : null;
   const envOverridesEntries = await Promise.all(
     PROVIDER_ENV_KEYS.map(async (envKey) => [envKey, await getSettingValue(settingKey(envKey))] as const),
   );
@@ -290,6 +295,7 @@ export async function getProviderConfigSnapshot(): Promise<ProviderConfigSnapsho
 
   return {
     modelOverride,
+    reasoningOverride,
     envOverrides,
     providers,
   };

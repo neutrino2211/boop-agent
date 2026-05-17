@@ -5,7 +5,14 @@ import {
   updateProviderEnvOverrides,
   type ProviderEnvKey,
 } from "./provider-config.js";
-import { clearRuntimeModel, resolveModelInput, setRuntimeModel } from "./runtime-config.js";
+import {
+  clearRuntimeModel,
+  clearRuntimeReasoningLevel,
+  resolveModelInput,
+  resolveReasoningInput,
+  setRuntimeModel,
+  setRuntimeReasoningLevel,
+} from "./runtime-config.js";
 
 function normalizeOptionalString(value: unknown): string | null | undefined {
   if (value === undefined) return undefined;
@@ -42,6 +49,28 @@ export function createProviderConfigRouter(): express.Router {
             return;
           }
           await setRuntimeModel(resolved);
+        }
+      }
+
+      if (Object.prototype.hasOwnProperty.call(body, "reasoning")) {
+        const reasoningInput = normalizeOptionalString(body.reasoning);
+        if (reasoningInput === undefined) {
+          res.status(400).json({ error: "reasoning must be a string or null" });
+          return;
+        }
+        if (reasoningInput === null) {
+          await clearRuntimeReasoningLevel();
+        } else {
+          const resolved = resolveReasoningInput(reasoningInput);
+          if (!resolved) {
+            res.status(400).json({
+              error:
+                `unknown reasoning level: ${reasoningInput}. ` +
+                `Use one of off, minimal, low, medium, high, xhigh.`,
+            });
+            return;
+          }
+          await setRuntimeReasoningLevel(resolved);
         }
       }
 

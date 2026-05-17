@@ -12,7 +12,7 @@ import {
 import { createAutomationMcp } from "./automation-tools.js";
 import { createDraftDecisionMcp } from "./draft-tools.js";
 import { createSelfMcp } from "./self-tools.js";
-import { getRuntimeModel } from "./runtime-config.js";
+import { getRuntimeModel, getRuntimeReasoningLevel } from "./runtime-config.js";
 import { broadcast } from "./broadcast.js";
 import { sendImessage } from "./sendblue.js";
 import { aggregateUsageFromResult, EMPTY_USAGE, type UsageTotals } from "./usage.js";
@@ -32,7 +32,7 @@ Your only tools:
 - spawn_agent (dispatches a sub-agent that CAN touch the world)
 - create_automation / list_automations / toggle_automation / delete_automation
 - list_drafts / send_draft / reject_draft
-- get_config / set_model / set_timezone / list_integrations / search_composio_catalog / inspect_toolkit (self-inspection)
+- get_config / set_model / set_reasoning / set_timezone / list_integrations / search_composio_catalog / inspect_toolkit (self-inspection)
 
 You cannot answer factual questions from your own knowledge. Not allowed.
 You have NO browser, NO WebSearch, NO WebFetch, NO file access, NO APIs.
@@ -143,6 +143,7 @@ When the user asks about Boop itself, pick the tool by intent:
 - Wants to know what model / config / time is currently in effect → get_config
 - Wants to switch models or change speed/quality tradeoff → set_model
   (takes effect next turn; this turn finishes on the current model)
+- Wants to tune reasoning depth (faster vs deeper thinking) → set_reasoning
 - Wants to know which integrations or accounts are connected → list_integrations
 - Wondering whether some service is connectable at all → search_composio_catalog
 - Probing the actual capabilities of a specific connected integration
@@ -370,6 +371,7 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
 
   const turnStart = Date.now();
   const requestedModel = await getRuntimeModel();
+  const requestedReasoning = await getRuntimeReasoningLevel();
   let reply = "";
   let lastNonEmptyAssistantText = "";
   let usage: UsageTotals = { ...EMPTY_USAGE };
@@ -379,6 +381,7 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
       options: {
         systemPrompt,
         model: requestedModel,
+        reasoning: requestedReasoning,
         mcpServers: {
           "boop-memory": memoryServer,
           "boop-spawn": spawnServer,
@@ -401,6 +404,7 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
           "mcp__boop-ack__send_ack",
           "mcp__boop-self__get_config",
           "mcp__boop-self__set_model",
+          "mcp__boop-self__set_reasoning",
           "mcp__boop-self__set_timezone",
           "mcp__boop-self__list_integrations",
           "mcp__boop-self__search_composio_catalog",

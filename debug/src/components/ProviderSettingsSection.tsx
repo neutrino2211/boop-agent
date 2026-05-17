@@ -11,11 +11,13 @@ interface ProviderSummary {
 
 interface ProviderConfigSnapshot {
   modelOverride: string | null;
+  reasoningOverride: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | null;
   envOverrides: Record<string, string | null>;
   providers: ProviderSummary[];
 }
 
 const OPENAI_FORMAT_APIS = new Set(["openai-completions", "openai-responses"]);
+const RUNTIME_REASONING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 
 const PROVIDER_FIELDS: Record<string, string[]> = {
   "azure-openai-responses": [
@@ -188,6 +190,7 @@ async function parseError(response: Response): Promise<string> {
 export function ProviderSettingsSection({ isDark }: { isDark: boolean }) {
   const [snapshot, setSnapshot] = useState<ProviderConfigSnapshot | null>(null);
   const [draftModel, setDraftModel] = useState("");
+  const [draftReasoning, setDraftReasoning] = useState("");
   const [draftOverrides, setDraftOverrides] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
@@ -201,6 +204,7 @@ export function ProviderSettingsSection({ isDark }: { isDark: boolean }) {
     }
     setDraftOverrides(envDrafts);
     setDraftModel(next.modelOverride ?? "");
+    setDraftReasoning(next.reasoningOverride ?? "");
   }, []);
 
   const loadSnapshot = useCallback(async () => {
@@ -225,7 +229,11 @@ export function ProviderSettingsSection({ isDark }: { isDark: boolean }) {
 
   const persist = useCallback(
     async (
-      payload: { model?: string | null; envOverrides?: Record<string, string | null> },
+      payload: {
+        model?: string | null;
+        reasoning?: string | null;
+        envOverrides?: Record<string, string | null>;
+      },
       busyKey: string,
       successNotice: string,
     ) => {
@@ -380,6 +388,54 @@ export function ProviderSettingsSection({ isDark }: { isDark: boolean }) {
               ))}
             </div>
           )}
+        </div>
+
+        <div className={`mt-4 border-t pt-3 ${isDark ? "border-slate-800/60" : "border-slate-200/60"}`}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className={`text-xs font-semibold uppercase tracking-wider ${faint}`}>
+                Runtime reasoning level
+              </div>
+              <div className={`text-xs mt-1 ${muted}`}>
+                Controls model reasoning effort for dispatcher and spawned agents. Higher levels
+                may improve quality but increase latency and cost.
+              </div>
+            </div>
+            {snapshot && (
+              <span className={`text-[10px] mono ${faint}`}>
+                active: {snapshot.reasoningOverride ?? "(default: off)"}
+              </span>
+            )}
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            <select
+              value={draftReasoning}
+              onChange={(e) => setDraftReasoning(e.target.value)}
+              className={`text-xs px-2.5 py-2 border rounded-md flex-1 mono ${inputBg}`}
+              disabled={loading || busy !== null}
+            >
+              <option value="">(unset: default off)</option>
+              {RUNTIME_REASONING_LEVELS.map((level) => (
+                <option key={level} value={level}>
+                  {level}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() =>
+                void persist(
+                  { reasoning: draftReasoning || null },
+                  "reasoning",
+                  draftReasoning
+                    ? `Reasoning level set to ${draftReasoning}.`
+                    : "Reasoning override cleared (default off).",
+                )}
+              disabled={loading || busy !== null}
+              className={`text-xs px-3 py-2 rounded-md disabled:opacity-50 ${primaryBtn}`}
+            >
+              {busy === "reasoning" ? "Saving..." : "Save"}
+            </button>
+          </div>
         </div>
       </div>
 

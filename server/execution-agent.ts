@@ -9,7 +9,7 @@ import {
 } from "./integrations/registry.js";
 import { createDraftStagingMcp } from "./draft-tools.js";
 import { aggregateUsageFromResult, EMPTY_USAGE, type UsageTotals } from "./usage.js";
-import { getRuntimeModel } from "./runtime-config.js";
+import { getRuntimeModel, getRuntimeReasoningLevel } from "./runtime-config.js";
 
 const running = new Map<string, AbortController>();
 
@@ -213,12 +213,14 @@ export async function spawnExecutionAgent(opts: SpawnOptions): Promise<SpawnResu
   let errorMsg: string | undefined;
 
   const requestedModel = await getRuntimeModel();
+  const requestedReasoning = await getRuntimeReasoningLevel();
   try {
     for await (const msg of query({
       prompt: opts.task,
       options: {
         systemPrompt: EXECUTION_SYSTEM,
         model: requestedModel,
+        reasoning: requestedReasoning,
         mcpServers,
         allowedTools,
         // Skill loading is enabled via the "Skill" tool in allowedTools.

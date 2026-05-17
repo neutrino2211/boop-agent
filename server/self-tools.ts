@@ -12,11 +12,19 @@ import {
   DEFAULT_MODEL,
   KNOWN_MODELS,
   MODEL_ALIASES,
+  RUNTIME_REASONING_LEVELS,
   getRuntimeModel,
+  getRuntimeReasoningLevel,
+  resolveReasoningInput,
   resolveModelInput,
+  setRuntimeReasoningLevel,
   setRuntimeModel,
 } from "./runtime-config.js";
-import { normalizeModelOrDefault } from "./model-config.js";
+import {
+  bestConfiguredModel,
+  modelStatus,
+  normalizeModelOrDefault,
+} from "./model-config.js";
 import {
   describeUserNow,
   getStoredUserTimezone,
@@ -31,15 +39,27 @@ export function createSelfMcp() {
     tools: [
       tool(
         "get_config",
-        "Return Boop's runtime configuration: which model/provider it's using, the user's timezone, the current local time, which integrations are loaded, and basic env info. Use when the user asks 'what model are you?', 'what time is it?', 'what timezone am I in?', or anything about the agent itself.",
+        "Return Boop's runtime configuration: which model/provider and reasoning level it's using, the user's timezone, the current local time, which integrations are loaded, and basic env info. Use when the user asks 'what model are you?', 'what time is it?', 'what timezone am I in?', or anything about the agent itself.",
         {},
         async () => {
           const integrations = availableIntegrations();
           const tzInfo = await describeUserNow();
+          const activeModel = await getRuntimeModel();
+          const reasoningLevel = await getRuntimeReasoningLevel();
+          const envModel = normalizeModelOrDefault(process.env.BOOP_MODEL ?? DEFAULT_MODEL);
+          const activeStatus = modelStatus(activeModel);
+          const envStatus = modelStatus(envModel);
           const config = {
-            model: await getRuntimeModel(),
-            envDefault: normalizeModelOrDefault(process.env.BOOP_MODEL ?? DEFAULT_MODEL),
+            model: activeModel,
+            reasoningLevel,
+            modelReady: activeStatus.ok,
+            modelIssue: activeStatus.reason ?? null,
+            envDefault: envModel,
+            envDefaultReady: envStatus.ok,
+            envDefaultIssue: envStatus.reason ?? null,
+            bestConfiguredModel: bestConfiguredModel([process.env.BOOP_MODEL, DEFAULT_MODEL]),
             availableModels: [...KNOWN_MODELS],
+            availableReasoningLevels: [...RUNTIME_REASONING_LEVELS],
             userTimezone: tzInfo.isExplicit ? tzInfo.timezone : null,
             timezoneFallback: tzInfo.isExplicit ? null : tzInfo.timezone,
             currentLocalTime: tzInfo.now,
@@ -127,6 +147,41 @@ Use when the user says "use opus", "switch to sonnet", "make it faster (haiku)",
               {
                 type: "text" as const,
                 text: `Model override set to ${resolved}. Next agent run (interaction or sub-agent) will use it. This current turn keeps the previous model.`,
+              },
+            ],
+          };
+        },
+      ),
+      tool(
+        "set_reasoning",
+        `Set the runtime reasoning effort for dispatcher + sub-agents. Change applies to the next turn.
+
+Levels: ${RUNTIME_REASONING_LEVELS.map((level) => `"${level}"`).join(", ")}
+
+Use when the user says things like "think harder", "use higher reasoning", "reduce latency/cost", or explicitly requests a reasoning level.`,
+        {
+          reasoning: z
+            .string()
+            .describe('Reasoning level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh".'),
+        },
+        async ({ reasoning }) => {
+          const resolved = resolveReasoningInput(reasoning);
+          if (!resolved) {
+            return {
+              content: [
+                {
+                  type: "text" as const,
+                  text: `Unknown reasoning level "${reasoning}". Use one of: ${RUNTIME_REASONING_LEVELS.join(", ")}.`,
+                },
+              ],
+            };
+          }
+          await setRuntimeReasoningLevel(resolved);
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `Reasoning level set to ${resolved}. Next agent run will use it.`,
               },
             ],
           };

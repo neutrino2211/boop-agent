@@ -61,6 +61,7 @@ export interface McpSdkServerConfigWithInstance {
 interface QueryOptions {
   systemPrompt?: string;
   model?: string;
+  reasoning?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
   mcpServers?: Record<string, McpSdkServerConfigWithInstance>;
   allowedTools?: string[];
   disallowedTools?: string[];
@@ -513,6 +514,7 @@ export async function* query(params: QueryParams): AsyncGenerator<SDKMessage> {
     initialState: {
       systemPrompt: options.systemPrompt ?? "",
       model,
+      thinkingLevel: options.reasoning ?? "off",
       tools,
     },
     toolExecution: "sequential",

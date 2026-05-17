@@ -3,7 +3,7 @@ import { api } from "../../convex/_generated/api.js";
 import { convex } from "../convex-client.js";
 import { embed } from "../embeddings.js";
 import { aggregateUsageFromResult, EMPTY_USAGE, type UsageTotals } from "../usage.js";
-import { getRuntimeModel } from "../runtime-config.js";
+import { getRuntimeModel, getRuntimeReasoningLevel } from "../runtime-config.js";
 import { SEGMENT_DEFAULTS, makeMemoryId, type MemorySegment } from "./types.js";
 
 const EXTRACTION_PROMPT = `You are a memory-extraction subagent.
@@ -46,6 +46,7 @@ export async function extractAndStore(opts: {
 }): Promise<void> {
   const started = Date.now();
   const requestedModel = await getRuntimeModel();
+  const requestedReasoning = await getRuntimeReasoningLevel();
   try {
     const payload = `USER: ${opts.userMessage}\n\nASSISTANT: ${opts.assistantReply}`;
     let buffer = "";
@@ -55,6 +56,7 @@ export async function extractAndStore(opts: {
       options: {
         systemPrompt: EXTRACTION_PROMPT,
         model: requestedModel,
+        reasoning: requestedReasoning,
         permissionMode: "bypassPermissions",
       },
     })) {
