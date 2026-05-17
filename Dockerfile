@@ -15,7 +15,7 @@ FROM node:22-bookworm-slim AS prod-deps
 WORKDIR /app
 COPY package*.json ./
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci --omit=dev --omit=optional --no-audit --no-fund
+    npm ci --omit=dev --no-audit --no-fund
 
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app

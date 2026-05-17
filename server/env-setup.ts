@@ -6,7 +6,10 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const root = resolve(here, "..");
+const rootCandidates = [resolve(here, ".."), resolve(here, "..", "..")];
+const root =
+  rootCandidates.find((candidate) => existsSync(resolve(candidate, "package.json"))) ??
+  rootCandidates[0];
 
 for (const name of [".env.local", ".env"]) {
   const path = resolve(root, name);

@@ -1,4 +1,10 @@
-import { getModels, getProviders, type KnownProvider, type Model } from "@earendil-works/pi-ai";
+import {
+  getEnvApiKey,
+  getModels,
+  getProviders,
+  type KnownProvider,
+  type Model,
+} from "@earendil-works/pi-ai";
 
 export const DEFAULT_MODEL = "anthropic/claude-sonnet-4-6";
 
@@ -38,6 +44,13 @@ const CURATED_MODELS = [
 ] as const;
 
 export const KNOWN_MODELS = new Set<string>(CURATED_MODELS);
+
+const AUTO_FALLBACK_MODELS = [
+  "anthropic/claude-sonnet-4-6",
+  "azure-openai-responses/gpt-5-mini",
+  "azure-openai-responses/gpt-5",
+  "openrouter/anthropic/claude-sonnet-4.5",
+] as const;
 
 function hasProviderPrefix(input: string): boolean {
   const slash = input.indexOf("/");
@@ -95,11 +108,76 @@ export function resolveModelInput(input: string): string | null {
   return normalized;
 }
 
+interface ProviderStatus {
+  ok: boolean;
+  reason?: string;
+}
+
+function hasPlaceholderToken(v: string | undefined): boolean {
+  return Boolean(v && /<[^>]+>/.test(v));
+}
+
+function providerStatus(provider: string): ProviderStatus {
+  const apiKey = getEnvApiKey(provider as KnownProvider);
+  if (!apiKey) {
+    if (provider === "anthropic") {
+      return { ok: false, reason: "missing ANTHROPIC_API_KEY (or ANTHROPIC_OAUTH_TOKEN)" };
+    }
+    if (provider === "azure-openai-responses") {
+      return { ok: false, reason: "missing AZURE_OPENAI_API_KEY" };
+    }
+    return { ok: false, reason: `missing API key for provider "${provider}"` };
+  }
+  if (provider === "azure-openai-responses") {
+    const baseUrl = process.env.AZURE_OPENAI_BASE_URL?.trim();
+    const resource = process.env.AZURE_OPENAI_RESOURCE_NAME?.trim();
+    if (!baseUrl && !resource) {
+      return {
+        ok: false,
+        reason: "missing AZURE_OPENAI_BASE_URL (or AZURE_OPENAI_RESOURCE_NAME)",
+      };
+    }
+    if (hasPlaceholderToken(baseUrl)) {
+      return {
+        ok: false,
+        reason: "AZURE_OPENAI_BASE_URL still contains a placeholder (<...>)",
+      };
+    }
+  }
+  return { ok: true };
+}
+
+export function modelStatus(ref: string): ProviderStatus {
+  const slash = ref.indexOf("/");
+  if (slash <= 0) return { ok: false, reason: `invalid model reference: ${ref}` };
+  const provider = ref.slice(0, slash).toLowerCase();
+  if (!PROVIDERS.has(provider)) {
+    return { ok: false, reason: `unknown provider: ${provider}` };
+  }
+  return providerStatus(provider);
+}
+
+export function bestConfiguredModel(preferred: Array<string | undefined> = []): string | null {
+  const seen = new Set<string>();
+  const candidates = [...preferred, ...AUTO_FALLBACK_MODELS];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const normalized = resolveModelInput(candidate) ?? candidate;
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    const status = modelStatus(normalized);
+    if (status.ok) return normalized;
+  }
+  return null;
+}
+
 export function normalizeModelOrDefault(input: string | undefined): string {
   if (input) {
     const normalized = resolveModelInput(input);
     if (normalized) return normalized;
   }
+  const auto = bestConfiguredModel();
+  if (auto) return auto;
   return DEFAULT_MODEL;
 }
 

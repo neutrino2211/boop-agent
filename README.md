@@ -192,13 +192,13 @@ into `dist/convex/_generated` so runtime imports resolve without `tsx`.
 The Dockerfile is multi-stage and ships only:
 - compiled server output (`dist/`)
 - compiled debug UI (`dist/debug/`) served by the server at `/debug`
-- production dependencies (`npm ci --omit=dev --omit=optional`)
+- production dependencies (`npm ci --omit=dev`)
 - a non-root runtime user (`node`)
 
 By default, container deploys set `BOOP_ENABLE_LOCAL_EMBEDDINGS=false` and
 `BOOP_ENABLE_BGE_MODEL=false` to avoid shipping/downloading the 400MB+ local
 model path. If you want local embeddings fallback in production, enable those
-env vars and install optional deps.
+env vars.
 
 When running in Docker, open the debug dashboard at:
 

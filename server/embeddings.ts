@@ -8,11 +8,22 @@
  */
 
 import type { FeatureExtractionPipeline } from "@huggingface/transformers";
+import { createRequire } from "node:module";
 
 const VOYAGE_MODEL = "voyage-3";
 const OPENAI_MODEL = "text-embedding-3-large";
 const LOCAL_MODEL = "Xenova/bge-large-en-v1.5";
 const DIMENSIONS = 1024;
+const require = createRequire(import.meta.url);
+
+function hasTransformersPackage(): boolean {
+  try {
+    require.resolve("@huggingface/transformers");
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function envEnabled(name: string, defaultValue = true): boolean {
   const raw = process.env[name];
@@ -21,8 +32,11 @@ function envEnabled(name: string, defaultValue = true): boolean {
 }
 
 const BGE_MODEL_ENABLED = envEnabled("BOOP_ENABLE_BGE_MODEL", true);
+const LOCAL_TRANSFORMERS_AVAILABLE = hasTransformersPackage();
 const LOCAL_EMBEDDINGS_ENABLED =
-  BGE_MODEL_ENABLED && envEnabled("BOOP_ENABLE_LOCAL_EMBEDDINGS", true);
+  BGE_MODEL_ENABLED &&
+  envEnabled("BOOP_ENABLE_LOCAL_EMBEDDINGS", true) &&
+  LOCAL_TRANSFORMERS_AVAILABLE;
 let warnedLocalDisabled = false;
 
 // Local pipeline is loaded lazily (model download is ~440MB) and cached
@@ -53,6 +67,9 @@ export function localEmbeddingsEnabled(): boolean {
 
 export function localEmbeddingsDisabledReason(): string | null {
   if (LOCAL_EMBEDDINGS_ENABLED) return null;
+  if (!LOCAL_TRANSFORMERS_AVAILABLE) {
+    return "@huggingface/transformers is not installed in this runtime image";
+  }
   if (!BGE_MODEL_ENABLED) {
     return "BOOP_ENABLE_BGE_MODEL is false";
   }
