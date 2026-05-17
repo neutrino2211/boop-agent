@@ -46,7 +46,7 @@ function extractAccounts(input: unknown): string[] {
   return [...accounts];
 }
 
-const EXECUTION_SYSTEM = `You are a focused background worker for the user.
+const EXECUTION_SYSTEM_BASE = `You are a focused background worker for the user.
 
 Your job:
 1. Perform the task you were given, end to end.
@@ -75,16 +75,25 @@ Style:
 - Prefer markdown with **bold** keywords and • bullets.
 - Under 500 words unless explicitly asked for more.
 - If you can't complete something, say why in one sentence.
+`;
 
+const EXECUTION_SYSTEM_DRAFT_ONLY = `${EXECUTION_SYSTEM_BASE}
 Safety:
 - Anything that sends a message, creates an event, or takes an external action: call save_draft with a JSON payload instead of the real send/create tool. Return the summary so the interaction agent can show it to the user.
 - Only the interaction agent's send_draft tool commits. You never commit.`;
+
+const EXECUTION_SYSTEM_DIRECT_ACTIONS = `${EXECUTION_SYSTEM_BASE}
+Authorization:
+- The parent agent has explicitly authorized this run to perform external actions directly.
+- Do NOT save a draft. Execute the required send/create/update/delete actions using integration tools now.
+- After action calls, clearly state what you executed and include IDs/links returned by tools when available.`;
 
 export interface SpawnOptions {
   task: string;
   integrations: string[];
   conversationId?: string;
   name?: string;
+  allowDirectActions?: boolean;
 }
 
 export interface SpawnResult {
@@ -131,6 +140,7 @@ function inferIntegrationsFromTask(task: string, available: string[]): string[] 
 export async function spawnExecutionAgent(opts: SpawnOptions): Promise<SpawnResult> {
   const agentId = randomId("agent");
   const name = opts.name ?? (opts.integrations.join("+") || "general");
+  const allowDirectActions = opts.allowDirectActions === true;
   const abort = new AbortController();
   running.set(agentId, abort);
 
@@ -139,7 +149,7 @@ export async function spawnExecutionAgent(opts: SpawnOptions): Promise<SpawnResu
   const taskPreview =
     opts.task.length > 120 ? opts.task.slice(0, 120) + "…" : opts.task;
   logAgent(
-    `spawn: ${name} [${opts.integrations.join(", ") || "no integrations"}] — ${JSON.stringify(taskPreview)}`,
+    `spawn: ${name} [${opts.integrations.join(", ") || "no integrations"}] (${allowDirectActions ? "direct-actions" : "draft-only"}) — ${JSON.stringify(taskPreview)}`,
   );
   const agentStart = Date.now();
 
@@ -193,7 +203,7 @@ export async function spawnExecutionAgent(opts: SpawnOptions): Promise<SpawnResu
     requestedIntegrations,
     opts.conversationId,
   );
-  const draftServer = opts.conversationId
+  const draftServer = !allowDirectActions && opts.conversationId
     ? createDraftStagingMcp(opts.conversationId)
     : undefined;
   const mcpServers = {
@@ -218,7 +228,9 @@ export async function spawnExecutionAgent(opts: SpawnOptions): Promise<SpawnResu
     for await (const msg of query({
       prompt: opts.task,
       options: {
-        systemPrompt: EXECUTION_SYSTEM,
+        systemPrompt: allowDirectActions
+          ? EXECUTION_SYSTEM_DIRECT_ACTIONS
+          : EXECUTION_SYSTEM_DRAFT_ONLY,
         model: requestedModel,
         reasoning: requestedReasoning,
         mcpServers,
@@ -335,11 +347,14 @@ export function runningAgentIds(): string[] {
 export async function retryAgent(agentId: string): Promise<SpawnResult | null> {
   const existing = await convex.query(api.agents.get, { agentId });
   if (!existing) return null;
+  const allowDirectActions =
+    existing.name.startsWith("send:") || existing.task.startsWith("Execute this approved draft.");
   return await spawnExecutionAgent({
     task: existing.task,
     integrations: existing.mcpServers,
     conversationId: existing.conversationId,
     name: existing.name,
+    allowDirectActions,
   });
 }
 

@@ -117,6 +117,11 @@ Drafts:
 External actions (email, calendar event, Slack message, etc.) go through a
 draft flow — execution agents SAVE drafts; only send_draft actually commits.
 
+Default behavior: keep external actions in draft mode.
+Exception: if the user gives explicit approval to execute now ("send now",
+"publish it", "yes post it"), you may call spawn_agent with
+allowDirectActions=true for that run so the sub-agent commits directly.
+
 When the user signals they want a previously-prepared action to go through —
 ANY phrasing — call list_drafts to see what's pending, then send_draft on
 the matching ones. The intent ("execute the thing we just talked about") is
@@ -317,6 +322,13 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
             .array(z.string())
             .describe(`Which integrations to give the agent. Available: ${integrations.join(", ") || "(none)"}`),
           name: z.string().optional().describe("Short label for the agent."),
+          allowDirectActions: z
+            .boolean()
+            .optional()
+            .default(false)
+            .describe(
+              "Set true only when the user has explicitly authorized immediate external execution (send/post/create now). Default false keeps draft-only behavior.",
+            ),
         },
         async (args) => {
           const res = await spawnExecutionAgent({
@@ -324,6 +336,7 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
             integrations: args.integrations,
             conversationId: opts.conversationId,
             name: args.name,
+            allowDirectActions: args.allowDirectActions,
           });
           return {
             content: [

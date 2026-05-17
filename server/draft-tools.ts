@@ -108,6 +108,7 @@ payload JSON: ${draft.payload}`;
             integrations: args.integrations,
             conversationId,
             name: `send:${draft.kind}`,
+            allowDirectActions: true,
           });
           return {
             content: [
