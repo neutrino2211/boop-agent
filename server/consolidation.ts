@@ -2,8 +2,12 @@ import { query } from "./agent-sdk.js";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { broadcast } from "./broadcast.js";
-import { normalizeModelOrDefault } from "./model-config.js";
 import { aggregateUsageFromResult, EMPTY_USAGE, type UsageTotals } from "./usage.js";
+import {
+  getRuntimeModel,
+  getRuntimeReasoningLevel,
+  type RuntimeReasoningLevel,
+} from "./runtime-config.js";
 
 function randomId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -98,9 +102,6 @@ interface Challenge {
   severity: "low" | "medium" | "high";
 }
 
-const ADVERSARY_MODEL = normalizeModelOrDefault(process.env.BOOP_ADVERSARY_MODEL ?? "claude-haiku-4-5");
-const DEFAULT_MODEL = normalizeModelOrDefault(process.env.BOOP_MODEL);
-
 interface Decision {
   proposalIndex: number;
   approve: boolean;
@@ -116,16 +117,18 @@ interface Applied {
 async function runLlm(
   systemPrompt: string,
   userPrompt: string,
-  model: string = DEFAULT_MODEL,
+  options: { model: string; reasoning?: RuntimeReasoningLevel },
 ): Promise<{ buffer: string; usage: UsageTotals; durationMs: number }> {
   const started = Date.now();
   let buffer = "";
   let usage: UsageTotals = { ...EMPTY_USAGE };
+  const { model, reasoning } = options;
   for await (const msg of query({
     prompt: userPrompt,
     options: {
       systemPrompt,
       model,
+      reasoning,
       permissionMode: "bypassPermissions",
     },
   })) {
@@ -176,6 +179,9 @@ export async function runConsolidation(trigger = "scheduled"): Promise<{
   merged: number;
   pruned: number;
 }> {
+  const requestedModel = await getRuntimeModel();
+  const requestedReasoning = await getRuntimeReasoningLevel();
+
   const runId = randomId("cons");
   await convex.mutation(api.consolidation.createRun, { runId, trigger });
   broadcast("consolidation_started", { runId, trigger });
@@ -238,7 +244,10 @@ export async function runConsolidation(trigger = "scheduled"): Promise<{
       .join("\n");
 
     broadcast("consolidation_phase", { runId, phase: "proposing" });
-    const proposerCall = await runLlm(PROPOSER_PROMPT, payload);
+    const proposerCall = await runLlm(PROPOSER_PROMPT, payload, {
+      model: requestedModel,
+      reasoning: requestedReasoning,
+    });
     await recordConsolidationUsage(
       "consolidation-proposer",
       runId,
@@ -310,7 +319,10 @@ export async function runConsolidation(trigger = "scheduled"): Promise<{
 
     broadcast("consolidation_phase", { runId, phase: "challenging" });
     const adversaryPayload = `Proposals:\n${proposalsList}\n\nOriginal memories:\n${payload}`;
-    const adversaryCall = await runLlm(ADVERSARY_PROMPT, adversaryPayload, ADVERSARY_MODEL);
+    const adversaryCall = await runLlm(ADVERSARY_PROMPT, adversaryPayload, {
+      model: requestedModel,
+      reasoning: requestedReasoning,
+    });
     await recordConsolidationUsage(
       "consolidation-adversary",
       runId,
@@ -347,7 +359,10 @@ export async function runConsolidation(trigger = "scheduled"): Promise<{
     const judgePayload = `Proposals:\n${proposalsList}\n\nAdversary challenges:\n${challengesBlock}\n\nOriginal memories:\n${payload}`;
 
     broadcast("consolidation_phase", { runId, phase: "judging" });
-    const judgeCall = await runLlm(JUDGE_PROMPT, judgePayload);
+    const judgeCall = await runLlm(JUDGE_PROMPT, judgePayload, {
+      model: requestedModel,
+      reasoning: requestedReasoning,
+    });
     await recordConsolidationUsage(
       "consolidation-judge",
       runId,
