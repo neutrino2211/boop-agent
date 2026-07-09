@@ -62,9 +62,10 @@ function trimmedOrNull(value: string): string | null {
 }
 
 export function TriliumSettingsSection({ isDark }: { isDark: boolean }) {
-  const settings = useQuery(api.settings.getMany, {
-    keys: TRILIUM_SETTING_KEYS.map(settingKey),
-  });
+  const baseUrl = useQuery(api.settings.get, { key: settingKey("TRILIUM_BASE_URL") });
+  const token = useQuery(api.settings.get, { key: settingKey("TRILIUM_ETAPI_TOKEN") });
+  const rootNoteId = useQuery(api.settings.get, { key: settingKey("TRILIUM_ROOT_NOTE_ID") });
+  const syncEnabled = useQuery(api.settings.get, { key: settingKey("TRILIUM_SYNC_ENABLED") });
   const setSetting = useMutation(api.settings.set);
   const clearSetting = useMutation(api.settings.clear);
 
@@ -79,16 +80,20 @@ export function TriliumSettingsSection({ isDark }: { isDark: boolean }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const loading = settings === undefined;
+  const loading =
+    baseUrl === undefined ||
+    token === undefined ||
+    rootNoteId === undefined ||
+    syncEnabled === undefined;
 
   const raw = useMemo<Record<TriliumEnvKey, string | null>>(
     () => ({
-      TRILIUM_BASE_URL: settings?.[settingKey("TRILIUM_BASE_URL")] ?? null,
-      TRILIUM_ETAPI_TOKEN: settings?.[settingKey("TRILIUM_ETAPI_TOKEN")] ?? null,
-      TRILIUM_ROOT_NOTE_ID: settings?.[settingKey("TRILIUM_ROOT_NOTE_ID")] ?? null,
-      TRILIUM_SYNC_ENABLED: settings?.[settingKey("TRILIUM_SYNC_ENABLED")] ?? null,
+      TRILIUM_BASE_URL: baseUrl ?? null,
+      TRILIUM_ETAPI_TOKEN: token ?? null,
+      TRILIUM_ROOT_NOTE_ID: rootNoteId ?? null,
+      TRILIUM_SYNC_ENABLED: syncEnabled ?? null,
     }),
-    [settings],
+    [baseUrl, token, rootNoteId, syncEnabled],
   );
 
   const stored = useMemo<Drafts>(

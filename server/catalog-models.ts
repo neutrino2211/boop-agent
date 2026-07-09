@@ -59,6 +59,10 @@ export async function listCatalogModels(): Promise<Record<CatalogModality, strin
     stored = await convex.query(api.settings.getMany, { keys });
   } catch (err) {
     console.warn("[catalog-models] settings:getMany failed", err);
+    const entries = await Promise.all(
+      modalities.map(async (modality) => [modality, await getCatalogModel(modality)] as const),
+    );
+    return Object.fromEntries(entries) as Record<CatalogModality, string>;
   }
   const runtimeModel = await getRuntimeModel();
   const entries = modalities.map((modality) => {
