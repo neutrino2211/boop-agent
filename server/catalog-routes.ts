@@ -4,11 +4,11 @@ import { convex } from "./convex-client.js";
 import {
   getCatalogModel,
   listCatalogModels,
-  modalityForContentType,
   setCatalogModel,
   type CatalogModality,
 } from "./catalog-models.js";
 import { processCatalogItem } from "./catalog-processing.js";
+import { detectMediaMetadata } from "./media-detection.js";
 import {
   deleteCatalogItem,
   deleteCatalogItemTriliumNote,
@@ -97,6 +97,9 @@ export async function createCatalogItemWithOptionalAsset(opts: {
   collectionIds?: string[];
   sourceConversationId?: string;
   sourceMessageHandle?: string;
+  extractedText?: string;
+  transcript?: string;
+  processNow?: boolean;
   asset?: {
     storageId: string;
     filename: string;
@@ -116,7 +119,8 @@ export async function createCatalogItemWithOptionalAsset(opts: {
     sourceConversationId: opts.sourceConversationId,
     sourceMessageHandle: opts.sourceMessageHandle,
     processingModel,
-    extractedText: opts.modality === "note" ? opts.summary : undefined,
+    extractedText: opts.extractedText ?? (opts.modality === "note" ? opts.summary : undefined),
+    transcript: opts.transcript,
   });
   if (opts.asset) {
     await convex.mutation(api.catalog.addAsset, {
@@ -127,7 +131,9 @@ export async function createCatalogItemWithOptionalAsset(opts: {
       sizeBytes: opts.asset.sizeBytes,
     });
   }
-  processCatalogItem(itemId).catch((err) => console.error("[catalog] processing failed", err));
+  if (opts.processNow !== false) {
+    processCatalogItem(itemId).catch((err) => console.error("[catalog] processing failed", err));
+  }
   return await convex.query(api.catalog.get, { itemId });
 }
 
@@ -171,6 +177,12 @@ export function createCatalogRouter(): express.Router {
         res.status(400).json({ error: "valid modality is required" });
         return;
       }
+      if (modality !== "note") {
+        res.status(400).json({
+          error: "media catalog items require an uploaded or inbound attachment asset; use /api/catalog/upload",
+        });
+        return;
+      }
       if (!isCatalogSource(source)) {
         res.status(400).json({ error: "valid source is required" });
         return;
@@ -206,6 +218,11 @@ export function createCatalogRouter(): express.Router {
           "catalog-upload";
         const contentType =
           cleanString(req.header("content-type")) ?? "application/octet-stream";
+        const detected = await detectMediaMetadata({
+          bytes: body,
+          filename,
+          contentType,
+        });
         const sourceInput =
           cleanString(firstParam(req.query.source as string | string[] | undefined)) ??
           "dashboard_upload";
@@ -213,14 +230,14 @@ export function createCatalogRouter(): express.Router {
         const modalityInput = cleanString(firstParam(req.query.modality as string | string[] | undefined));
         const modality = isCatalogModality(modalityInput)
           ? modalityInput
-          : modalityForContentType(contentType, filename);
-        const storageId = await uploadToConvexStorage(body, contentType);
+          : (detected.modality as CatalogModality);
+        const storageId = await uploadToConvexStorage(body, detected.contentType);
         const title =
           cleanString(firstParam(req.query.title as string | string[] | undefined)) ??
-          titleFromFilename(filename);
+          titleFromFilename(detected.filename);
         const summary =
           cleanString(firstParam(req.query.summary as string | string[] | undefined)) ??
-          `${filename} uploaded to the catalog.`;
+          `${detected.filename} uploaded to the catalog.`;
         const item = await createCatalogItemWithOptionalAsset({
           title,
           summary,
@@ -232,8 +249,8 @@ export function createCatalogRouter(): express.Router {
           sourceMessageHandle: cleanString(firstParam(req.query.messageHandle as string | string[] | undefined)),
           asset: {
             storageId,
-            filename,
-            contentType,
+            filename: detected.filename,
+            contentType: detected.contentType,
             sizeBytes: body.length,
           },
         });

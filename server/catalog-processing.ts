@@ -9,6 +9,7 @@ import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { getCatalogModel, type CatalogModality } from "./catalog-models.js";
 import { broadcast } from "./broadcast.js";
+import { detectMediaMetadata } from "./media-detection.js";
 import { resolveModelRef } from "./model-config.js";
 
 interface CatalogAssetForProcessing {
@@ -32,7 +33,7 @@ interface CatalogItemForProcessing {
   assets: CatalogAssetForProcessing[];
 }
 
-interface CatalogAnalysis {
+export interface CatalogAnalysis {
   summary: string;
   tags: string[];
   extractedText?: string;
@@ -46,6 +47,35 @@ interface MediaBytes {
 
 const MAX_TEXT_CHARS = 45_000;
 const MAX_TAGS = 12;
+const OPENAI_TRANSCRIPTION_EXTS = new Set([
+  ".flac",
+  ".aac",
+  ".aiff",
+  ".aif",
+  ".m4a",
+  ".mp3",
+  ".mp4",
+  ".mpeg",
+  ".mpga",
+  ".oga",
+  ".ogg",
+  ".wav",
+  ".webm",
+]);
+const OPENROUTER_TRANSCRIPTION_FORMATS = new Set([
+  "aac",
+  "aiff",
+  "flac",
+  "m4a",
+  "mp3",
+  "mp4",
+  "mpeg",
+  "mpga",
+  "oga",
+  "ogg",
+  "wav",
+  "webm",
+]);
 const ANALYSIS_SYSTEM_PROMPT = [
   "You are the catalog processing model for a personal notes and media dashboard.",
   "Return only JSON with this exact shape:",
@@ -148,7 +178,12 @@ function extensionFor(asset: CatalogAssetForProcessing, fallback: string): strin
 
 async function fetchPrimaryAsset(item: CatalogItemForProcessing): Promise<MediaBytes> {
   const asset = item.assets[0];
-  if (!asset) throw new Error(`Catalog item ${item.itemId} has no attached asset`);
+  if (!asset) {
+    throw new Error(
+      `Catalog item ${item.itemId} is ${item.modality} but has no attached asset. ` +
+        "Media items must be created through an upload or inbound attachment path.",
+    );
+  }
   if (!asset.storageUrl) throw new Error(`Catalog asset ${asset.filename} has no readable storage URL`);
   const response = await fetch(asset.storageUrl);
   if (!response.ok) {
@@ -234,20 +269,242 @@ async function extractVideoAudio(bytes: Buffer, asset: CatalogAssetForProcessing
   }
 }
 
+function canTranscribeDirectly(filename: string, contentType: string): boolean {
+  const ext = path.extname(filename).toLowerCase();
+  const type = contentType.toLowerCase();
+  return (
+    OPENAI_TRANSCRIPTION_EXTS.has(ext) ||
+    type === "audio/flac" ||
+    type === "audio/m4a" ||
+    type === "audio/mp3" ||
+    type === "audio/mpeg" ||
+    type === "audio/mpga" ||
+    type === "audio/ogg" ||
+    type === "audio/wav" ||
+    type === "audio/webm" ||
+    type === "video/mp4" ||
+    type === "video/webm"
+  );
+}
+
+function openRouterModelId(ref: string): string {
+  return ref.startsWith("openrouter/") ? ref.slice("openrouter/".length) : ref;
+}
+
+function openRouterAudioFormat(filename: string, contentType: string): string {
+  const ext = path.extname(filename).replace(/^\./, "").toLowerCase();
+  if (OPENROUTER_TRANSCRIPTION_FORMATS.has(ext)) return ext;
+  const type = contentType.toLowerCase();
+  if (type.includes("aac")) return "aac";
+  if (type.includes("aiff") || type.includes("aifc")) return "aiff";
+  if (type.includes("flac")) return "flac";
+  if (type.includes("m4a") || type.includes("mp4")) return "m4a";
+  if (type.includes("mpeg") || type.includes("mp3")) return "mp3";
+  if (type.includes("ogg") || type.includes("opus")) return "ogg";
+  if (type.includes("wav") || type.includes("wave")) return "wav";
+  if (type.includes("webm")) return "webm";
+  return "mp3";
+}
+
+function openRouterAudioModelCandidates(modelRef: string): string[] {
+  const candidates = [
+    modelRef.startsWith("openrouter/") ? openRouterModelId(modelRef) : undefined,
+    process.env.OPENROUTER_AUDIO_TRANSCRIBE_MODEL?.trim(),
+    process.env.CATALOG_AUDIO_TRANSCRIBE_MODEL?.trim()?.startsWith("openrouter/")
+      ? openRouterModelId(process.env.CATALOG_AUDIO_TRANSCRIBE_MODEL.trim())
+      : process.env.CATALOG_AUDIO_TRANSCRIBE_MODEL?.trim(),
+    "openai/whisper-1",
+  ];
+  const seen = new Set<string>();
+  return candidates.filter((candidate): candidate is string => {
+    if (!candidate || seen.has(candidate)) return false;
+    seen.add(candidate);
+    return true;
+  });
+}
+
+async function convertAudioForTranscription(
+  bytes: Buffer,
+  filename: string,
+  contentType: string,
+): Promise<{ bytes: Buffer; filename: string; contentType: string }> {
+  if (canTranscribeDirectly(filename, contentType)) {
+    return { bytes, filename, contentType };
+  }
+  const asset = { filename, contentType, sizeBytes: bytes.length };
+  const input = await writeTempFile(bytes, extensionFor(asset, ".audio"));
+  const output = path.join(tmpdir(), `boop-catalog-transcribe-${randomUUID()}.mp3`);
+  try {
+    await runProcess("ffmpeg", [
+      "-y",
+      "-i",
+      input,
+      "-vn",
+      "-ac",
+      "1",
+      "-ar",
+      "16000",
+      "-b:a",
+      "64k",
+      output,
+    ]);
+    const base = path.basename(filename, path.extname(filename)) || "audio";
+    return {
+      bytes: await fs.readFile(output),
+      filename: `${base}.mp3`,
+      contentType: "audio/mpeg",
+    };
+  } finally {
+    await cleanup([input, output]);
+  }
+}
+
+function openRouterHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+    "Content-Type": "application/json",
+  };
+  if (process.env.OPENROUTER_HTTP_REFERER) {
+    headers["HTTP-Referer"] = process.env.OPENROUTER_HTTP_REFERER;
+  }
+  headers["X-Title"] = process.env.OPENROUTER_APP_TITLE || "Boop Agent";
+  return headers;
+}
+
+function openRouterTextFromChatResponse(payload: unknown): string {
+  const obj = payload as {
+    choices?: Array<{
+      message?: {
+        content?: unknown;
+      };
+    }>;
+  };
+  const content = obj.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (!part || typeof part !== "object") return "";
+        const block = part as Record<string, unknown>;
+        return typeof block.text === "string" ? block.text : "";
+      })
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+  }
+  return "";
+}
+
+async function transcribeAudioWithOpenRouter(
+  bytes: Buffer,
+  filename: string,
+  contentType: string,
+  modelRef: string,
+): Promise<{ text: string; model: string }> {
+  const apiKey = process.env.OPENROUTER_API_KEY?.trim();
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY is not configured");
+  const prepared = await convertAudioForTranscription(bytes, filename, contentType);
+  const inputAudio = {
+    data: prepared.bytes.toString("base64"),
+    format: openRouterAudioFormat(prepared.filename, prepared.contentType),
+  };
+  const errors: string[] = [];
+  for (const model of openRouterAudioModelCandidates(modelRef)) {
+    try {
+      const res = await fetch("https://openrouter.ai/api/v1/audio/transcriptions", {
+        method: "POST",
+        headers: openRouterHeaders(),
+        body: JSON.stringify({
+          model,
+          input_audio: inputAudio,
+        }),
+      });
+      const payload = (await res.json().catch(async () => ({ error: await res.text() }))) as {
+        text?: unknown;
+        error?: unknown;
+      };
+      if (!res.ok) {
+        const detail =
+          typeof payload.error === "string"
+            ? payload.error
+            : JSON.stringify(payload.error ?? payload).slice(0, 500);
+        throw new Error(`STT ${res.status}: ${detail}`);
+      }
+      if (typeof payload.text === "string" && payload.text.trim()) {
+        return { text: payload.text.trim(), model: `openrouter/${model}` };
+      }
+      throw new Error("STT response did not include text");
+    } catch (err) {
+      errors.push(`${model}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    try {
+      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: openRouterHeaders(),
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text:
+                    "Transcribe this audio faithfully. Return only the transcript text. " +
+                    "If there is no intelligible speech, briefly describe the audible content.",
+                },
+                {
+                  type: "input_audio",
+                  input_audio: inputAudio,
+                },
+              ],
+            },
+          ],
+          stream: false,
+        }),
+      });
+      const payload = await res.json().catch(async () => ({ error: await res.text() }));
+      if (!res.ok) {
+        const detail = JSON.stringify((payload as { error?: unknown }).error ?? payload).slice(0, 500);
+        throw new Error(`chat audio ${res.status}: ${detail}`);
+      }
+      const text = openRouterTextFromChatResponse(payload);
+      if (text) return { text, model: `openrouter/${model}` };
+      throw new Error("chat audio response did not include text");
+    } catch (err) {
+      errors.push(`${model} chat: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  throw new Error(`OpenRouter audio transcription failed: ${errors.join("; ")}`);
+}
+
 async function transcribeAudio(
   bytes: Buffer,
   filename: string,
   contentType: string,
+  modelRef: string,
 ): Promise<string> {
+  try {
+    const result = await transcribeAudioWithOpenRouter(bytes, filename, contentType, modelRef);
+    console.log(`[catalog-processing] transcribed audio with ${result.model}`);
+    return result.text;
+  } catch (err) {
+    console.warn("[catalog-processing] OpenRouter audio transcription failed; falling back", err);
+  }
+
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
     throw new Error(
-      "Audio transcription requires OPENAI_API_KEY. The transcript is then summarized through the configured PI/OpenRouter catalog model.",
+      "Audio transcription requires OPENROUTER_API_KEY, or OPENAI_API_KEY as a fallback.",
     );
   }
   const client = new OpenAI({ apiKey });
   const model = process.env.CATALOG_AUDIO_TRANSCRIBE_MODEL?.trim() || "gpt-4o-mini-transcribe";
-  const file = await toFile(bytes, filename, { type: contentType || "application/octet-stream" });
+  const prepared = await convertAudioForTranscription(bytes, filename, contentType);
+  const file = await toFile(prepared.bytes, prepared.filename, {
+    type: prepared.contentType || "application/octet-stream",
+  });
   const result = await client.audio.transcriptions.create({ file, model });
   if (typeof result === "string") return result;
   return result.text;
@@ -347,6 +604,7 @@ async function analyzeAudio(
     media.bytes,
     media.asset.filename,
     media.asset.contentType,
+    modelRef,
   );
   const analysis = await analyzeWithPi({
     item,
@@ -375,7 +633,7 @@ async function analyzeVideo(
   let transcript: string | undefined;
   if (audioBytes) {
     try {
-      transcript = await transcribeAudio(audioBytes, `${media.asset.filename}.mp3`, "audio/mpeg");
+      transcript = await transcribeAudio(audioBytes, `${media.asset.filename}.mp3`, "audio/mpeg", modelRef);
     } catch (err) {
       console.warn("[catalog-processing] video audio transcription skipped", err);
     }
@@ -431,6 +689,64 @@ async function analyzeItem(
   if (item.modality === "audio") return analyzeAudio(item, modelRef, media);
   if (item.modality === "video") return analyzeVideo(item, modelRef, media);
   return analyzeFile(item, modelRef, media);
+}
+
+export interface AttachmentAnalysisResult extends CatalogAnalysis {
+  modality: CatalogModality;
+  model: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+}
+
+export async function analyzeAttachmentBytes(args: {
+  bytes: Buffer;
+  filename: string;
+  contentType: string;
+  sourceText?: string;
+  sourceConversationId?: string;
+}): Promise<AttachmentAnalysisResult> {
+  const detected = await detectMediaMetadata({
+    bytes: args.bytes,
+    filename: args.filename,
+    contentType: args.contentType,
+  });
+  const modality = detected.modality as CatalogModality;
+  const model = await getCatalogModel(modality);
+  const asset: CatalogAssetForProcessing = {
+    filename: detected.filename,
+    contentType: detected.contentType,
+    sizeBytes: args.bytes.length,
+  };
+  const item: CatalogItemForProcessing = {
+    itemId: `inbound_${randomUUID()}`,
+    title: detected.filename,
+    summary: args.sourceText?.trim() || `${detected.filename} received as an inbound attachment.`,
+    modality,
+    tags: ["imessage", modality],
+    assets: [asset],
+  };
+  const media = { asset, bytes: args.bytes };
+  let analysis: CatalogAnalysis;
+  if (modality === "note") {
+    analysis = await analyzeNote(item, model, isTextLike(asset) ? decodeText(args.bytes) : item.summary);
+  } else if (modality === "image") {
+    analysis = await analyzeImage(item, model, media);
+  } else if (modality === "audio") {
+    analysis = await analyzeAudio(item, model, media);
+  } else if (modality === "video") {
+    analysis = await analyzeVideo(item, model, media);
+  } else {
+    analysis = await analyzeFile(item, model, media);
+  }
+  return {
+    ...analysis,
+    modality,
+    model,
+    filename: detected.filename,
+    contentType: detected.contentType,
+    sizeBytes: args.bytes.length,
+  };
 }
 
 export async function processCatalogItem(itemId: string): Promise<void> {

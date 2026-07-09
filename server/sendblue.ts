@@ -8,10 +8,17 @@ import {
   uploadToConvexStorage,
 } from "./catalog-routes.js";
 import { modalityForContentType } from "./catalog-models.js";
+import {
+  analyzeAttachmentBytes,
+  type AttachmentAnalysisResult,
+} from "./catalog-processing.js";
+import { detectMediaMetadata } from "./media-detection.js";
 
 const API_BASE = "https://api.sendblue.com/api";
 const MAX_CHUNK = 2900;
 const MAX_MEDIA_BYTES = 75 * 1024 * 1024;
+const MAX_ATTACHMENT_CONTEXT_CHARS = 32_000;
+const MAX_ATTACHMENT_FIELD_CHARS = 10_000;
 
 function stripMarkdown(text: string): string {
   return text
@@ -68,6 +75,16 @@ interface InboundMedia {
   contentType?: string;
 }
 
+interface PreparedInboundMedia {
+  url: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  bytes: Buffer;
+  analysis?: AttachmentAnalysisResult;
+  processingError?: string;
+}
+
 function basenameFromUrl(url: string): string {
   try {
     const parsed = new URL(url);
@@ -76,6 +93,19 @@ function basenameFromUrl(url: string): string {
   } catch {
     return "imessage-attachment";
   }
+}
+
+function contentDispositionFilename(value: string | null): string | undefined {
+  if (!value) return undefined;
+  const star = value.match(/filename\*=UTF-8''([^;]+)/i)?.[1];
+  if (star) {
+    try {
+      return decodeURIComponent(star.replace(/^"|"$/g, ""));
+    } catch {
+      return star.replace(/^"|"$/g, "");
+    }
+  }
+  return value.match(/filename="?([^";]+)"?/i)?.[1]?.trim();
 }
 
 function shouldCatalogInbound(content: string): boolean {
@@ -91,6 +121,102 @@ function attachmentSummary(media: InboundMedia[]): string {
       return `${index + 1}:${name} (${type})`;
     })
     .join(", ");
+}
+
+function truncateForAgent(value: string | undefined, limit = MAX_ATTACHMENT_FIELD_CHARS): string | undefined {
+  if (!value) return undefined;
+  if (value.length <= limit) return value;
+  return `${value.slice(0, limit)}\n[truncated ${value.length - limit} chars]`;
+}
+
+function formatAttachmentContext(attachments: PreparedInboundMedia[]): string {
+  if (attachments.length === 0) return "";
+  const lines = [
+    "Inbound attachments were automatically processed before this turn. Use this context to answer the user; do not claim you cannot see or hear the attachments.",
+  ];
+  for (const [index, attachment] of attachments.entries()) {
+    const mb = (attachment.sizeBytes / 1_000_000).toFixed(2);
+    lines.push("");
+    lines.push(`Attachment ${index + 1}: ${attachment.filename}`);
+    lines.push(`Content type: ${attachment.contentType}; size: ${mb} MB`);
+    if (attachment.analysis) {
+      const analysis = attachment.analysis;
+      lines.push(`Modality: ${analysis.modality}`);
+      lines.push(`Processing model: ${analysis.model}`);
+      lines.push(`Summary: ${analysis.summary}`);
+      if (analysis.extractedText) {
+        lines.push("Extracted/visible text:");
+        lines.push(truncateForAgent(analysis.extractedText) ?? "");
+      }
+      if (analysis.transcript) {
+        lines.push("Transcript:");
+        lines.push(truncateForAgent(analysis.transcript) ?? "");
+      }
+      if (analysis.tags.length > 0) lines.push(`Tags: ${analysis.tags.join(", ")}`);
+    } else {
+      lines.push(`Processing failed: ${attachment.processingError ?? "unknown error"}`);
+    }
+  }
+  const text = lines.join("\n");
+  if (text.length <= MAX_ATTACHMENT_CONTEXT_CHARS) return text;
+  return `${text.slice(0, MAX_ATTACHMENT_CONTEXT_CHARS)}\n[attachment context truncated]`;
+}
+
+async function downloadInboundMedia(media: InboundMedia[]): Promise<PreparedInboundMedia[]> {
+  const prepared: PreparedInboundMedia[] = [];
+  for (const item of media) {
+    try {
+      const res = await fetch(item.url);
+      if (!res.ok) throw new Error(`download failed (${res.status})`);
+      const length = Number(res.headers.get("content-length") ?? 0);
+      if (length > MAX_MEDIA_BYTES) throw new Error(`media exceeds ${MAX_MEDIA_BYTES} bytes`);
+      const bytes = Buffer.from(await res.arrayBuffer());
+      if (bytes.length > MAX_MEDIA_BYTES) throw new Error(`media exceeds ${MAX_MEDIA_BYTES} bytes`);
+      const detected = await detectMediaMetadata({
+        bytes,
+        filename:
+          item.filename ??
+          contentDispositionFilename(res.headers.get("content-disposition")) ??
+          basenameFromUrl(item.url),
+        contentType: item.contentType ?? res.headers.get("content-type"),
+      });
+      prepared.push({
+        url: item.url,
+        filename: detected.filename,
+        contentType: detected.contentType,
+        sizeBytes: bytes.length,
+        bytes,
+      });
+    } catch (err) {
+      console.warn("[sendblue] failed to download inbound media", err);
+    }
+  }
+  return prepared;
+}
+
+async function analyzeInboundMedia(
+  attachments: PreparedInboundMedia[],
+  content: string,
+  conversationId: string,
+  turnTag: string,
+): Promise<void> {
+  for (const attachment of attachments) {
+    try {
+      attachment.analysis = await analyzeAttachmentBytes({
+        bytes: attachment.bytes,
+        filename: attachment.filename,
+        contentType: attachment.contentType,
+        sourceText: content,
+        sourceConversationId: conversationId,
+      });
+      console.log(
+        `[turn ${turnTag}] processed attachment ${attachment.filename} as ${attachment.analysis.modality} with ${attachment.analysis.model}`,
+      );
+    } catch (err) {
+      attachment.processingError = err instanceof Error ? err.message : String(err);
+      console.warn(`[turn ${turnTag}] attachment processing failed for ${attachment.filename}`, err);
+    }
+  }
 }
 
 function collectInboundMedia(value: unknown, out: InboundMedia[], seen: Set<string>): void {
@@ -135,7 +261,7 @@ function stringField(obj: Record<string, unknown>, key: string): string | undefi
 }
 
 async function catalogInboundMedia(args: {
-  media: InboundMedia[];
+  media: PreparedInboundMedia[];
   content: string;
   conversationId: string;
   messageHandle?: string;
@@ -143,32 +269,25 @@ async function catalogInboundMedia(args: {
   const itemIds: string[] = [];
   for (const media of args.media) {
     try {
-      const res = await fetch(media.url);
-      if (!res.ok) throw new Error(`download failed (${res.status})`);
-      const length = Number(res.headers.get("content-length") ?? 0);
-      if (length > MAX_MEDIA_BYTES) throw new Error(`media exceeds ${MAX_MEDIA_BYTES} bytes`);
-      const bytes = Buffer.from(await res.arrayBuffer());
-      if (bytes.length > MAX_MEDIA_BYTES) throw new Error(`media exceeds ${MAX_MEDIA_BYTES} bytes`);
-      const contentType =
-        media.contentType ??
-        res.headers.get("content-type") ??
-        "application/octet-stream";
-      const filename = media.filename ?? basenameFromUrl(media.url);
-      const storageId = await uploadToConvexStorage(bytes, contentType);
-      const modality = modalityForContentType(contentType, filename);
+      const storageId = await uploadToConvexStorage(media.bytes, media.contentType);
+      const modality = media.analysis?.modality ?? modalityForContentType(media.contentType, media.filename);
       const item = (await createCatalogItemWithOptionalAsset({
-        title: filename.replace(/\.[a-z0-9]+$/i, "") || filename,
-        summary: args.content || `${filename} sent via iMessage.`,
+        title: media.filename.replace(/\.[a-z0-9]+$/i, "") || media.filename,
+        summary: media.analysis?.summary ?? (args.content || `${media.filename} sent via iMessage.`),
         modality,
         source: "imessage",
-        tags: ["imessage", modality],
+        status: media.analysis ? "ready" : "processing",
+        tags: media.analysis?.tags ?? ["imessage", modality],
         sourceConversationId: args.conversationId,
         sourceMessageHandle: args.messageHandle,
+        extractedText: media.analysis?.extractedText,
+        transcript: media.analysis?.transcript,
+        processNow: !media.analysis,
         asset: {
           storageId,
-          filename,
-          contentType,
-          sizeBytes: bytes.length,
+          filename: media.filename,
+          contentType: media.contentType,
+          sizeBytes: media.sizeBytes,
         },
       })) as { itemId?: string; id?: string } | null;
       const itemId = item?.itemId ?? item?.id;
@@ -279,24 +398,36 @@ export function createSendblueRouter(): express.Router {
 
     const stopTyping = startTypingLoop(from_number);
     try {
-      let contentForAgent =
+      const attachments = media.length > 0 ? await downloadInboundMedia(media) : [];
+      if (attachments.length > 0) {
+        await analyzeInboundMedia(attachments, contentText, conversationId, turnTag);
+      }
+      const attachmentContext = formatAttachmentContext(attachments);
+      const downloadFailureContext =
+        media.length > 0 && attachments.length === 0
+          ? `Received ${media.length} attachment${media.length === 1 ? "" : "s"}, but none could be downloaded for processing.`
+          : "";
+      let contentForAgent = [
         contentText ||
-        `Received ${media.length} attachment${media.length === 1 ? "" : "s"} via iMessage.`;
-      if (media.length > 0 && shouldCatalogInbound(contentText)) {
+          `Received ${media.length} attachment${media.length === 1 ? "" : "s"} via iMessage.`,
+        attachmentContext,
+        downloadFailureContext,
+      ].filter(Boolean).join("\n\n");
+      if (attachments.length > 0 && shouldCatalogInbound(contentText)) {
         const cataloged = await catalogInboundMedia({
-          media,
+          media: attachments,
           content: contentText,
           conversationId,
           messageHandle: message_handle,
         });
         if (cataloged.length > 0) {
-          contentForAgent = `${contentText}\n\nCataloged attachment item IDs: ${cataloged.join(", ")}`;
-          console.log(`[turn ${turnTag}] cataloged ${cataloged.length}/${media.length} attachment(s): ${cataloged.join(", ")}`);
+          contentForAgent = `${contentForAgent}\n\nCataloged attachment item IDs: ${cataloged.join(", ")}`;
+          console.log(`[turn ${turnTag}] cataloged ${cataloged.length}/${attachments.length} attachment(s): ${cataloged.join(", ")}`);
         } else {
-          console.log(`[turn ${turnTag}] found ${media.length} attachment(s), none cataloged`);
+          console.log(`[turn ${turnTag}] found ${attachments.length} attachment(s), none cataloged`);
         }
-      } else if (media.length > 0) {
-        console.log(`[turn ${turnTag}] found ${media.length} attachment(s), waiting for explicit catalog/save request`);
+      } else if (attachments.length > 0) {
+        console.log(`[turn ${turnTag}] found ${attachments.length} attachment(s), waiting for explicit catalog/save request`);
       }
       const reply = await handleUserMessage({
         conversationId,

@@ -2,12 +2,7 @@ import { z } from "zod";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { createSdkMcpServer, tool } from "./agent-sdk.js";
-import {
-  getCatalogModel,
-  listCatalogModels,
-  setCatalogModel,
-  type CatalogModality,
-} from "./catalog-models.js";
+import { getCatalogModel, listCatalogModels, setCatalogModel, type CatalogModality } from "./catalog-models.js";
 import { processCatalogItem } from "./catalog-processing.js";
 import {
   deleteCatalogItem,
@@ -39,7 +34,7 @@ export function createNotesMcp(conversationId?: string) {
     tools: [
       tool(
         "catalog_item",
-        "Create a catalog item for a note, idea, link, or media description the user explicitly asked to save/catalog. For raw files, the dashboard/iMessage upload path creates assets separately; this tool stores structured metadata.",
+        "Create a catalog item for a note, idea, link, or text description the user explicitly asked to save/catalog. Do not use this for raw images, audio, video, or files; those must come through an upload or inbound attachment path so an asset URL/storage object exists.",
         {
           title: z.string().describe("Short useful title."),
           summary: z.string().describe("Concise summary of what is being cataloged."),
@@ -52,6 +47,14 @@ export function createNotesMcp(conversationId?: string) {
           processNow: z.boolean().optional().default(true),
         },
         async (args) => {
+          if (args.modality !== "note") {
+            return text({
+              error:
+                "catalog_item cannot create media entries without an attached asset. " +
+                "Use modality 'note' for a text description, or rely on the dashboard/iMessage upload path for raw media.",
+              requestedModality: args.modality,
+            });
+          }
           const model = await getCatalogModel(args.modality as CatalogModality);
           const itemId = await convex.mutation(api.catalog.createItem, {
             title: args.title,

@@ -1,5 +1,6 @@
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
+import { modalityForMime } from "./media-detection.js";
 import { getRuntimeModel, resolveModelInput } from "./runtime-config.js";
 
 export type CatalogModality = "note" | "image" | "audio" | "video" | "file";
@@ -9,15 +10,7 @@ const MODEL_TTL_MS = 30 * 1000;
 const cache = new Map<CatalogModality, { at: number; value: string }>();
 
 export function modalityForContentType(contentType: string, filename = ""): CatalogModality {
-  const type = contentType.toLowerCase();
-  const lowerName = filename.toLowerCase();
-  if (type.startsWith("image/")) return "image";
-  if (type.startsWith("audio/")) return "audio";
-  if (type.startsWith("video/")) return "video";
-  if (type.startsWith("text/") || lowerName.endsWith(".md") || lowerName.endsWith(".txt")) {
-    return "note";
-  }
-  return "file";
+  return modalityForMime(contentType, filename) as CatalogModality;
 }
 
 export async function getCatalogModel(modality: CatalogModality): Promise<string> {
