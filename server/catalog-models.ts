@@ -53,8 +53,20 @@ export async function setCatalogModel(
 
 export async function listCatalogModels(): Promise<Record<CatalogModality, string>> {
   const modalities: CatalogModality[] = ["note", "image", "audio", "video", "file"];
-  const entries = await Promise.all(
-    modalities.map(async (modality) => [modality, await getCatalogModel(modality)] as const),
-  );
+  const keys = modalities.map((modality) => `${MODEL_KEY_PREFIX}${modality}`);
+  let stored: Record<string, string | null> = {};
+  try {
+    stored = await convex.query(api.settings.getMany, { keys });
+  } catch (err) {
+    console.warn("[catalog-models] settings:getMany failed", err);
+  }
+  const runtimeModel = await getRuntimeModel();
+  const entries = modalities.map((modality) => {
+    const key = `${MODEL_KEY_PREFIX}${modality}`;
+    const value = stored[key];
+    const resolved = value ? (resolveModelInput(value) ?? value) : runtimeModel;
+    cache.set(modality, { at: Date.now(), value: resolved });
+    return [modality, resolved] as const;
+  });
   return Object.fromEntries(entries) as Record<CatalogModality, string>;
 }

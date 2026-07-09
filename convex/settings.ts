@@ -12,6 +12,22 @@ export const get = query({
   },
 });
 
+export const getMany = query({
+  args: { keys: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    const entries = await Promise.all(
+      args.keys.map(async (key) => {
+        const row = await ctx.db
+          .query("settings")
+          .withIndex("by_key", (q) => q.eq("key", key))
+          .unique();
+        return [key, row?.value ?? null] as const;
+      }),
+    );
+    return Object.fromEntries(entries);
+  },
+});
+
 export const set = mutation({
   args: { key: v.string(), value: v.string() },
   handler: async (ctx, args) => {
