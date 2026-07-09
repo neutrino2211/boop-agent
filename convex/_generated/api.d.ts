@@ -10,6 +10,7 @@
 
 import type * as agents from "../agents.js";
 import type * as automations from "../automations.js";
+import type * as catalog from "../catalog.js";
 import type * as consolidation from "../consolidation.js";
 import type * as conversations from "../conversations.js";
 import type * as dashboard from "../dashboard.js";
@@ -30,6 +31,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   agents: typeof agents;
   automations: typeof automations;
+  catalog: typeof catalog;
   consolidation: typeof consolidation;
   conversations: typeof conversations;
   dashboard: typeof dashboard;

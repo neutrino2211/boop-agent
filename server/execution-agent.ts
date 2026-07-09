@@ -8,6 +8,7 @@ import {
   refreshIntegrations,
 } from "./integrations/registry.js";
 import { createDraftStagingMcp } from "./draft-tools.js";
+import { createNotesMcp } from "./notes-tools.js";
 import { aggregateUsageFromResult, EMPTY_USAGE, type UsageTotals } from "./usage.js";
 import { getRuntimeModel, getRuntimeReasoningLevel } from "./runtime-config.js";
 
@@ -52,6 +53,9 @@ Your job:
 1. Perform the task you were given, end to end.
 2. Use your tools — WebSearch, WebFetch, and any integrations loaded for this spawn — to investigate and act.
 3. Return a concise, well-structured answer — not a data dump.
+
+Catalog:
+- You have a boop-notes tool for cataloged notes/media. Use it when the task asks to save, catalog, organize, retrieve, retry processing, configure modality models, or sync an item to Trilium Notes.
 
 Research discipline:
 - Prefer WebSearch for fresh/factual questions. WebFetch when you need the content of a known URL.
@@ -206,9 +210,11 @@ export async function spawnExecutionAgent(opts: SpawnOptions): Promise<SpawnResu
   const draftServer = !allowDirectActions && opts.conversationId
     ? createDraftStagingMcp(opts.conversationId)
     : undefined;
+  const notesServer = createNotesMcp(opts.conversationId);
   const mcpServers = {
     ...integrationServers,
     ...(draftServer ? { "boop-drafts": draftServer } : {}),
+    "boop-notes": notesServer,
   };
   const allowedTools = [
     "WebSearch",

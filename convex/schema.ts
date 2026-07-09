@@ -236,4 +236,88 @@ export default defineSchema({
   })
     .index("by_automation", ["automationId"])
     .index("by_run_id", ["runId"]),
+
+  catalogItems: defineTable({
+    itemId: v.string(),
+    title: v.string(),
+    summary: v.string(),
+    modality: v.union(
+      v.literal("note"),
+      v.literal("image"),
+      v.literal("audio"),
+      v.literal("video"),
+      v.literal("file"),
+    ),
+    source: v.union(
+      v.literal("imessage"),
+      v.literal("dashboard_upload"),
+      v.literal("connector"),
+    ),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("processing"),
+      v.literal("ready"),
+      v.literal("failed"),
+      v.literal("synced"),
+    ),
+    tags: v.array(v.string()),
+    collectionIds: v.array(v.string()),
+    searchText: v.string(),
+    sourceConversationId: v.optional(v.string()),
+    sourceMessageHandle: v.optional(v.string()),
+    syncedNoteId: v.optional(v.string()),
+    notesSyncStatus: v.union(
+      v.literal("not_synced"),
+      v.literal("syncing"),
+      v.literal("synced"),
+      v.literal("failed"),
+    ),
+    processingModel: v.string(),
+    processingError: v.optional(v.string()),
+    extractedText: v.optional(v.string()),
+    transcript: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_item_id", ["itemId"])
+    .index("by_status", ["status"])
+    .index("by_modality", ["modality"])
+    .index("by_source", ["source"])
+    .index("by_updated_at", ["updatedAt"])
+    .searchIndex("search_catalog", {
+      searchField: "searchText",
+      filterFields: ["status", "modality", "source"],
+    }),
+
+  catalogAssets: defineTable({
+    assetId: v.string(),
+    itemId: v.string(),
+    storageId: v.optional(v.id("_storage")),
+    filename: v.string(),
+    contentType: v.string(),
+    sizeBytes: v.number(),
+    thumbnailUrl: v.optional(v.string()),
+    durationMs: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_asset_id", ["assetId"])
+    .index("by_item_id", ["itemId"])
+    .index("by_storage_id", ["storageId"]),
+
+  catalogCollections: defineTable({
+    collectionId: v.string(),
+    name: v.string(),
+    color: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_collection_id", ["collectionId"]),
+
+  catalogEvents: defineTable({
+    itemId: v.string(),
+    eventType: v.string(),
+    data: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_item_id", ["itemId"])
+    .index("by_event_type", ["eventType"]),
 });

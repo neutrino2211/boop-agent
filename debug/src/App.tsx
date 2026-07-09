@@ -10,6 +10,7 @@ import {
   DashboardSquare01Icon,
   ArrowShrink02Icon,
   Settings01Icon,
+  FileAttachmentIcon,
 } from "@hugeicons/core-free-icons";
 import { api } from "../../convex/_generated/api.js";
 import { useSocket } from "./lib/useSocket.js";
@@ -21,9 +22,11 @@ import { EventsPanel } from "./components/EventsPanel.js";
 import { ConnectionsPanel } from "./components/ConnectionsPanel.js";
 import { ConsolidationPanel } from "./components/ConsolidationPanel.js";
 import { SettingsPanel } from "./components/SettingsPanel.js";
+import { CatalogPanel } from "./components/CatalogPanel.js";
 
 type View =
   | "dashboard"
+  | "catalog"
   | "agents"
   | "automations"
   | "memory"
@@ -36,6 +39,7 @@ type Theme = "dark" | "light";
 
 const NAV_ICONS: Record<View, any> = {
   dashboard: DashboardSquare01Icon,
+  catalog: FileAttachmentIcon,
   agents: MachineRobotIcon,
   automations: WorkflowCircle03Icon,
   memory: AiBrain02Icon,
@@ -47,6 +51,7 @@ const NAV_ICONS: Record<View, any> = {
 
 const NAV: { id: View; label: string }[] = [
   { id: "dashboard", label: "Dashboard" },
+  { id: "catalog", label: "Catalog" },
   { id: "agents", label: "Agents" },
   { id: "automations", label: "Automations" },
   { id: "memory", label: "Memory" },
@@ -125,7 +130,7 @@ export function App() {
 
         <div className="flex items-center gap-4">
           {counts && (
-            <div className="flex items-center gap-4">
+            <div className="hidden sm:flex items-center gap-4">
               <MetricPill label="Short" value={counts.short} isDark={isDark} />
               <MetricPill label="Long" value={counts.long} isDark={isDark} />
               <MetricPill
@@ -181,7 +186,7 @@ export function App() {
       <div className="flex flex-1 min-h-0">
         {/* Sidebar */}
         <nav
-          className={`w-[168px] shrink-0 border-r flex flex-col py-1.5 ${
+          className={`w-[52px] sm:w-[168px] shrink-0 border-r flex flex-col py-1.5 ${
             isDark ? "border-slate-800 bg-slate-950/50" : "border-slate-200 bg-white/50"
           }`}
         >
@@ -200,9 +205,9 @@ export function App() {
               }`}
             >
               <HugeiconsIcon icon={NAV_ICONS[item.id]} size={18} className="shrink-0" />
-              {item.label}
+              <span className="hidden sm:inline">{item.label}</span>
               {item.id === "agents" && activeAgentCount > 0 && (
-                <span className="ml-auto flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold bg-sky-500 text-white">
+                <span className="sm:ml-auto flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold bg-sky-500 text-white">
                   {activeAgentCount}
                 </span>
               )}
@@ -212,7 +217,7 @@ export function App() {
           <div className="mt-auto px-4 py-3 flex items-center gap-2">
             <img src="/appicon.png" alt="" className="w-5 h-5 rounded" />
             <span
-              className={`text-[10px] ${isDark ? "text-slate-600" : "text-slate-400"} mono`}
+              className={`hidden sm:inline text-[10px] ${isDark ? "text-slate-600" : "text-slate-400"} mono`}
             >
               v0.1
             </span>
@@ -223,6 +228,7 @@ export function App() {
         <main className="flex-1 min-w-0 overflow-hidden debug-scroll">
           <div className="h-full overflow-auto debug-scroll p-5 fade-in">
             {view === "dashboard" && <DashboardPanel isDark={isDark} />}
+            {view === "catalog" && <CatalogPanel isDark={isDark} />}
             {view === "agents" && <AgentsPanel isDark={isDark} />}
             {view === "automations" && <AutomationsPanel isDark={isDark} />}
             {view === "memory" && <MemoryPanel isDark={isDark} />}

@@ -12,6 +12,7 @@ import {
 import { createAutomationMcp } from "./automation-tools.js";
 import { createDraftDecisionMcp } from "./draft-tools.js";
 import { createSelfMcp } from "./self-tools.js";
+import { createNotesMcp } from "./notes-tools.js";
 import { getRuntimeModel, getRuntimeReasoningLevel } from "./runtime-config.js";
 import { broadcast } from "./broadcast.js";
 import { sendImessage } from "./sendblue.js";
@@ -29,6 +30,7 @@ Tone: Warm, witty, concise. Write like you're texting a friend. No corporate voi
 
 Your only tools:
 - recall / write_memory (durable memory for this user)
+- catalog_item / search_catalog / update_catalog_item / retry_catalog_processing / sync_to_notes / list_catalog_models / set_catalog_model (cataloged notes/media via the notes tool)
 - spawn_agent (dispatches a sub-agent that CAN touch the world)
 - create_automation / list_automations / toggle_automation / delete_automation
 - list_drafts / send_draft / reject_draft
@@ -134,6 +136,9 @@ When the user signals they want to back out (cancel, scrap it, different
 version, never mind, etc.), call reject_draft.
 
 Never claim something was sent unless send_draft returned success.
+
+Catalog / notes:
+When the user explicitly asks to save, catalog, organize, or sync something they sent or described, use catalog_item for text/metadata or spawn an agent if external tool research is needed first. Do not auto-catalog casual attachments unless the user asks. Use search_catalog when they ask what has been saved. Use sync_to_notes only when they ask to sync/create the Trilium note or when a cataloging request explicitly says it should go to notes.
 
 Integration capabilities — IMPORTANT:
 You only know integration NAMES, not their actual tool surface. Composio's
@@ -261,6 +266,7 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
   const automationServer = createAutomationMcp(opts.conversationId);
   const draftDecisionServer = createDraftDecisionMcp(opts.conversationId);
   const selfServer = createSelfMcp();
+  const notesServer = createNotesMcp(opts.conversationId);
 
   const ackServer = createSdkMcpServer({
     name: "boop-ack",
@@ -402,6 +408,7 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
           "boop-draft-decisions": draftDecisionServer,
           "boop-ack": ackServer,
           "boop-self": selfServer,
+          "boop-notes": notesServer,
         },
         allowedTools: [
           "mcp__boop-memory__write_memory",
@@ -422,6 +429,13 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
           "mcp__boop-self__list_integrations",
           "mcp__boop-self__search_composio_catalog",
           "mcp__boop-self__inspect_toolkit",
+          "mcp__boop-notes__catalog_item",
+          "mcp__boop-notes__search_catalog",
+          "mcp__boop-notes__update_catalog_item",
+          "mcp__boop-notes__retry_catalog_processing",
+          "mcp__boop-notes__sync_to_notes",
+          "mcp__boop-notes__list_catalog_models",
+          "mcp__boop-notes__set_catalog_model",
         ],
         // Belt-and-suspenders: even with bypassPermissions the SDK can leak
         // its built-ins if we only whitelist. Explicitly block them on the

@@ -11,6 +11,25 @@ const RANGES: { id: TimeRange; label: string }[] = [
   { id: "all", label: "All time" },
 ];
 
+interface OpenRouterUsage {
+  configured: boolean;
+  updatedAt: number;
+  error?: string;
+  key: null | {
+    label: string;
+    usage: number | null;
+    limit: number | null;
+    limitRemaining: number | null;
+    includeByokInLimit: boolean;
+    isManagementKey: boolean;
+  };
+  account: null | {
+    totalCredits: number | null;
+    totalUsage: number | null;
+    balance: number | null;
+  };
+}
+
 function cutoffDate(range: TimeRange): string | null {
   if (range === "all") return null;
   const days = range === "7d" ? 7 : range === "30d" ? 30 : 90;
@@ -29,9 +48,51 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
+function fmtMoney(value: number | null | undefined, digits = 2): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  return `$${value.toFixed(digits)}`;
+}
+
 export function DashboardPanel({ isDark }: { isDark: boolean }) {
   const data = useQuery(api.dashboard.metrics, {});
+  const catalogMetrics = useQuery(api.catalog.metrics, {});
+  const usageSummary = useQuery(api.usageRecords.summary, { limit: 5000 });
   const [range, setRange] = useState<TimeRange>("all");
+  const [openRouterUsage, setOpenRouterUsage] = useState<OpenRouterUsage | null>(null);
+  const [openRouterLoading, setOpenRouterLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setOpenRouterLoading(true);
+    fetch("/api/openrouter/usage")
+      .then(async (res) => {
+        const payload = (await res.json()) as OpenRouterUsage;
+        if (!res.ok && !payload.error) {
+          throw new Error(`OpenRouter usage request failed (${res.status})`);
+        }
+        return payload;
+      })
+      .then((payload) => {
+        if (!cancelled) setOpenRouterUsage(payload);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setOpenRouterUsage({
+            configured: false,
+            updatedAt: Date.now(),
+            error: err instanceof Error ? err.message : String(err),
+            key: null,
+            account: null,
+          });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setOpenRouterLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filtered = useMemo(() => {
     if (!data) return null;
@@ -105,6 +166,12 @@ export function DashboardPanel({ isDark }: { isDark: boolean }) {
       };
 
   const failPct = (filtered.agents.failureRate * 100).toFixed(1);
+  const openRouterKeySpend = openRouterUsage?.key?.usage ?? null;
+  const openRouterKeyLimit = openRouterUsage?.key?.limit ?? null;
+  const openRouterKeyRemaining = openRouterUsage?.key?.limitRemaining ?? null;
+  const openRouterAccountUsage = openRouterUsage?.account?.totalUsage ?? null;
+  const openRouterAccountBalance = openRouterUsage?.account?.balance ?? null;
+  const trackedUsageCost = usageSummary?.totalCost ?? filtered.cost.total;
 
   return (
     <div className="h-full overflow-y-auto debug-scroll -m-5 p-5 space-y-5">
@@ -145,12 +212,24 @@ export function DashboardPanel({ isDark }: { isDark: boolean }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
         <StatCard label="Messages" value={fmt(data.messages)} c={c} />
         <StatCard
           label="Memories"
           value={fmt(data.memories.total)}
           sub={`${fmt(data.memories.shortTerm)}s / ${fmt(data.memories.longTerm)}l / ${fmt(data.memories.permanent)}p`}
+          c={c}
+        />
+        <StatCard
+          label="Catalog"
+          value={fmt(catalogMetrics?.total ?? 0)}
+          sub={`${fmt(catalogMetrics?.synced ?? 0)} synced`}
+          c={c}
+        />
+        <StatCard
+          label="Media"
+          value={fmt(catalogMetrics?.media ?? 0)}
+          sub={`${fmt(catalogMetrics?.processing ?? 0)} processing / ${fmt(catalogMetrics?.failed ?? 0)} failed`}
           c={c}
         />
         <StatCard
@@ -160,25 +239,53 @@ export function DashboardPanel({ isDark }: { isDark: boolean }) {
           c={c}
         />
         <StatCard
-          label="Total Cost"
-          value={`$${filtered.cost.total.toFixed(2)}`}
+          label="Tracked Cost"
+          value={fmtMoney(trackedUsageCost)}
           color={isDark ? "text-emerald-400" : "text-emerald-600"}
           c={c}
           isDark={isDark}
           info={{
-            title: "API-equivalent cost",
+            title: "Internal usage log",
             body: (
               <>
                 <p className="mb-1.5">
-                  This number is what your token usage <em>would</em> cost at Anthropic API rates.
+                  This is the app's own usage ledger from Convex usage records.
                 </p>
                 <p className="mb-1.5">
-                  If you're using your <strong>Claude Code subscription</strong> (the default), you're
-                  paying a flat monthly rate — not these dollar amounts.
+                  It can include providers outside OpenRouter, so compare it with the OpenRouter cards
+                  before treating it as a billing total.
                 </p>
                 <p>
-                  Watch this as a usage-burn proxy (against subscription rate limits) or as a
-                  forecast for what API auth would cost.
+                  Going forward we should store OpenRouter generation IDs to reconcile exact per-call costs.
+                </p>
+              </>
+            ),
+          }}
+        />
+        <StatCard
+          label="OpenRouter Key"
+          value={openRouterLoading ? "…" : fmtMoney(openRouterKeySpend)}
+          sub={
+            openRouterUsage?.error
+              ? "usage unavailable"
+              : openRouterKeyLimit !== null
+                ? `${fmtMoney(openRouterKeyRemaining)} left of ${fmtMoney(openRouterKeyLimit)}`
+                : openRouterUsage?.configured === false
+                  ? "key not configured"
+                  : "current key spend"
+          }
+          color={isDark ? "text-sky-400" : "text-sky-600"}
+          c={c}
+          isDark={isDark}
+          info={{
+            title: "OpenRouter actuals",
+            body: (
+              <>
+                <p className="mb-1.5">
+                  This comes from OpenRouter's key endpoint for the active API key.
+                </p>
+                <p>
+                  It is the closest number to actual spend for requests made through this key.
                 </p>
               </>
             ),
@@ -202,6 +309,48 @@ export function DashboardPanel({ isDark }: { isDark: boolean }) {
               : undefined
           }
           c={c}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+        <BillingCard
+          title="OpenRouter Account"
+          isDark={isDark}
+          c={c}
+          rows={[
+            ["Total used", fmtMoney(openRouterAccountUsage, 3)],
+            ["Balance", fmtMoney(openRouterAccountBalance, 3)],
+            ["Credits", fmtMoney(openRouterUsage?.account?.totalCredits, 2)],
+          ]}
+          note={
+            openRouterUsage?.error
+              ? openRouterUsage.error
+              : openRouterUsage?.configured === false
+                ? "OPENROUTER_API_KEY is not configured on this server."
+                : "Account-level credits can include usage from other keys."
+          }
+        />
+        <BillingCard
+          title="Internal Ledger"
+          isDark={isDark}
+          c={c}
+          rows={[
+            ["Tracked cost", fmtMoney(usageSummary?.totalCost, 3)],
+            ["Usage rows", usageSummary ? fmt(usageSummary.rowCount) : "—"],
+            ["Model calls", usageSummary ? fmt(Object.values(usageSummary.bySource).reduce((sum, source) => sum + source.count, 0)) : "—"],
+          ]}
+          note="Convex usageRecords include dispatcher, execution, extraction, and consolidation calls."
+        />
+        <BillingCard
+          title="Reconciliation"
+          isDark={isDark}
+          c={c}
+          rows={[
+            ["Key actual", fmtMoney(openRouterKeySpend, 3)],
+            ["Tracked minus key", fmtMoney(typeof openRouterKeySpend === "number" ? trackedUsageCost - openRouterKeySpend : null, 3)],
+            ["Key used", openRouterKeyLimit ? `${Math.min(100, ((openRouterKeySpend ?? 0) / openRouterKeyLimit) * 100).toFixed(1)}%` : "—"],
+          ]}
+          note="The difference includes non-OpenRouter providers and estimated rows without generation IDs."
         />
       </div>
 
@@ -386,6 +535,37 @@ function StatCard({
       </div>
       {sub && <div className={`text-[11px] mt-0.5 ${c.sub}`}>{sub}</div>}
     </div>
+  );
+}
+
+function BillingCard({
+  title,
+  rows,
+  note,
+  c,
+  isDark,
+}: {
+  title: string;
+  rows: Array<[string, string]>;
+  note: string;
+  c: { chart: string; label: string; value: string; sub: string };
+  isDark: boolean;
+}) {
+  return (
+    <section className={`rounded-xl border p-4 ${c.chart}`}>
+      <div className={`text-xs font-semibold uppercase tracking-wider ${c.label}`}>
+        {title}
+      </div>
+      <div className="mt-3 space-y-2">
+        {rows.map(([label, value]) => (
+          <div key={label} className="flex items-baseline justify-between gap-3 text-xs">
+            <span className={isDark ? "text-slate-500" : "text-slate-500"}>{label}</span>
+            <span className={`mono font-semibold text-right ${c.value}`}>{value}</span>
+          </div>
+        ))}
+      </div>
+      <p className={`mt-3 text-[11px] leading-relaxed ${c.sub}`}>{note}</p>
+    </section>
   );
 }
 

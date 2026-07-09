@@ -3,9 +3,15 @@ import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { handleUserMessage } from "./interaction-agent.js";
 import { broadcast } from "./broadcast.js";
+import {
+  createCatalogItemWithOptionalAsset,
+  uploadToConvexStorage,
+} from "./catalog-routes.js";
+import { modalityForContentType } from "./catalog-models.js";
 
 const API_BASE = "https://api.sendblue.com/api";
 const MAX_CHUNK = 2900;
+const MAX_MEDIA_BYTES = 75 * 1024 * 1024;
 
 function stripMarkdown(text: string): string {
   return text
@@ -54,6 +60,113 @@ function normalizeE164(n: string | undefined): string | undefined {
   if (/^\d{10}$/.test(trimmed)) return `+1${trimmed}`;
   if (/^\d{11,15}$/.test(trimmed)) return `+${trimmed}`;
   return trimmed;
+}
+
+interface InboundMedia {
+  url: string;
+  filename?: string;
+  contentType?: string;
+}
+
+function basenameFromUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const last = parsed.pathname.split("/").filter(Boolean).pop();
+    return last ? decodeURIComponent(last) : "imessage-attachment";
+  } catch {
+    return "imessage-attachment";
+  }
+}
+
+function shouldCatalogInbound(content: string): boolean {
+  return /\b(?:catalog|save|store|organize|archive|file this|remember this)\b/i.test(content);
+}
+
+function collectInboundMedia(value: unknown, out: InboundMedia[], seen: Set<string>): void {
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (const entry of value) collectInboundMedia(entry, out, seen);
+    return;
+  }
+  const obj = value as Record<string, unknown>;
+  const url =
+    stringField(obj, "media_url") ??
+    stringField(obj, "mediaUrl") ??
+    stringField(obj, "file_url") ??
+    stringField(obj, "fileUrl") ??
+    stringField(obj, "attachment_url") ??
+    stringField(obj, "attachmentUrl") ??
+    stringField(obj, "url");
+  if (url && /^https?:\/\//i.test(url) && !seen.has(url)) {
+    seen.add(url);
+    out.push({
+      url,
+      filename:
+        stringField(obj, "filename") ??
+        stringField(obj, "file_name") ??
+        stringField(obj, "name") ??
+        basenameFromUrl(url),
+      contentType:
+        stringField(obj, "content_type") ??
+        stringField(obj, "contentType") ??
+        stringField(obj, "mime") ??
+        stringField(obj, "mime_type"),
+    });
+  }
+  for (const key of ["attachments", "media", "files", "images", "videos", "audio"]) {
+    if (obj[key]) collectInboundMedia(obj[key], out, seen);
+  }
+}
+
+function stringField(obj: Record<string, unknown>, key: string): string | undefined {
+  const value = obj[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+async function catalogInboundMedia(args: {
+  media: InboundMedia[];
+  content: string;
+  conversationId: string;
+  messageHandle?: string;
+}): Promise<string[]> {
+  const itemIds: string[] = [];
+  for (const media of args.media) {
+    try {
+      const res = await fetch(media.url);
+      if (!res.ok) throw new Error(`download failed (${res.status})`);
+      const length = Number(res.headers.get("content-length") ?? 0);
+      if (length > MAX_MEDIA_BYTES) throw new Error(`media exceeds ${MAX_MEDIA_BYTES} bytes`);
+      const bytes = Buffer.from(await res.arrayBuffer());
+      if (bytes.length > MAX_MEDIA_BYTES) throw new Error(`media exceeds ${MAX_MEDIA_BYTES} bytes`);
+      const contentType =
+        media.contentType ??
+        res.headers.get("content-type") ??
+        "application/octet-stream";
+      const filename = media.filename ?? basenameFromUrl(media.url);
+      const storageId = await uploadToConvexStorage(bytes, contentType);
+      const modality = modalityForContentType(contentType, filename);
+      const item = (await createCatalogItemWithOptionalAsset({
+        title: filename.replace(/\.[a-z0-9]+$/i, "") || filename,
+        summary: args.content || `${filename} sent via iMessage.`,
+        modality,
+        source: "imessage",
+        tags: ["imessage", modality],
+        sourceConversationId: args.conversationId,
+        sourceMessageHandle: args.messageHandle,
+        asset: {
+          storageId,
+          filename,
+          contentType,
+          sizeBytes: bytes.length,
+        },
+      })) as { itemId?: string; id?: string } | null;
+      const itemId = item?.itemId ?? item?.id;
+      if (itemId) itemIds.push(itemId);
+    } catch (err) {
+      console.warn("[sendblue] failed to catalog inbound media", err);
+    }
+  }
+  return itemIds;
 }
 
 export async function sendImessage(toNumber: string, text: string): Promise<void> {
@@ -124,6 +237,8 @@ export function createSendblueRouter(): express.Router {
 
   router.post("/webhook", async (req, res) => {
     const { content, from_number, is_outbound, message_handle } = req.body ?? {};
+    const media: InboundMedia[] = [];
+    collectInboundMedia(req.body, media, new Set());
     if (is_outbound || !content || !from_number) {
       res.json({ ok: true, skipped: true });
       return;
@@ -150,9 +265,21 @@ export function createSendblueRouter(): express.Router {
 
     const stopTyping = startTypingLoop(from_number);
     try {
+      let contentForAgent = content;
+      if (content && media.length > 0 && shouldCatalogInbound(content)) {
+        const cataloged = await catalogInboundMedia({
+          media,
+          content,
+          conversationId,
+          messageHandle: message_handle,
+        });
+        if (cataloged.length > 0) {
+          contentForAgent = `${content}\n\nCataloged attachment item IDs: ${cataloged.join(", ")}`;
+        }
+      }
       const reply = await handleUserMessage({
         conversationId,
-        content,
+        content: contentForAgent,
         turnTag,
         onThinking: (t) => broadcast("thinking", { conversationId, t }),
       });

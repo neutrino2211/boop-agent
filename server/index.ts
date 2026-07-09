@@ -21,6 +21,8 @@ import { preloadLocalModel } from "./embeddings.js";
 import { createMemoryRouter } from "./memory-routes.js";
 import { createProviderConfigRouter } from "./provider-config-routes.js";
 import { hydrateProviderEnvOverrides } from "./provider-config.js";
+import { createCatalogRouter } from "./catalog-routes.js";
+import { createOpenRouterRouter } from "./openrouter-routes.js";
 
 function parsePositiveMs(raw: string | undefined, fallback: number): number {
   const parsed = Number(raw);
@@ -64,10 +66,10 @@ function withTimeout<T>(
 function resolveDebugUiDir(): string | null {
   const here = dirname(fileURLToPath(import.meta.url));
   const candidates = [
-    // Compiled runtime path (dist/server/index.js -> dist/debug).
-    resolve(here, "..", "debug"),
     // Source runtime path (server/index.ts -> debug/dist).
     resolve(here, "..", "debug", "dist"),
+    // Compiled runtime path (dist/server/index.js -> dist/debug).
+    resolve(here, "..", "debug"),
     // Fallback when compiled output lives under dist/server and debug build
     // lives at project-root/debug/dist.
     resolve(here, "..", "..", "debug", "dist"),
@@ -174,15 +176,21 @@ async function main() {
   const composioRouter = createComposioRouter();
   const memoryRouter = createMemoryRouter();
   const providerConfigRouter = createProviderConfigRouter();
+  const catalogRouter = createCatalogRouter();
+  const openRouterRouter = createOpenRouterRouter();
 
   app.use("/sendblue", sendblueRouter);
   app.use("/composio", composioRouter);
   app.use("/memory", memoryRouter);
   app.use("/provider-config", providerConfigRouter);
+  app.use("/catalog", catalogRouter);
+  app.use("/openrouter", openRouterRouter);
   api.use("/sendblue", sendblueRouter);
   api.use("/composio", composioRouter);
   api.use("/memory", memoryRouter);
   api.use("/provider-config", providerConfigRouter);
+  api.use("/catalog", catalogRouter);
+  api.use("/openrouter", openRouterRouter);
 
   const cancelHandler: express.RequestHandler = (req, res) => {
     const id = firstParam(req.params.id);
