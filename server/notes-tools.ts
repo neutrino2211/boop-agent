@@ -9,7 +9,12 @@ import {
   type CatalogModality,
 } from "./catalog-models.js";
 import { processCatalogItem } from "./catalog-processing.js";
-import { syncCatalogItemToTrilium } from "./trilium.js";
+import {
+  deleteCatalogItem,
+  deleteCatalogItemTriliumNote,
+  deleteTriliumNote,
+  syncCatalogItemToTrilium,
+} from "./trilium.js";
 
 const modalityEnum = z.enum(["note", "image", "audio", "video", "file"]);
 const sourceEnum = z.enum(["imessage", "dashboard_upload", "connector"]);
@@ -118,6 +123,35 @@ export function createNotesMcp(conversationId?: string) {
         async ({ itemId }) => {
           const noteId = await syncCatalogItemToTrilium(itemId);
           return text({ itemId, noteId, notesSyncStatus: "synced" });
+        },
+      ),
+      tool(
+        "delete_catalog_item",
+        "Delete a catalog item and its stored catalog assets after the user explicitly asks to delete/remove it. Set deleteSyncedNote true only when the user also asks to delete the synced Trilium note.",
+        {
+          itemId: z.string(),
+          deleteSyncedNote: z.boolean().optional().default(false),
+        },
+        async ({ itemId, deleteSyncedNote }) => {
+          return text(await deleteCatalogItem(itemId, { deleteTriliumNote: deleteSyncedNote }));
+        },
+      ),
+      tool(
+        "delete_catalog_trilium_note",
+        "Delete the Trilium note synced from a catalog item, then mark that catalog item as not synced. Use only after the user explicitly asks to delete the Trilium note.",
+        { itemId: z.string() },
+        async ({ itemId }) => {
+          const noteId = await deleteCatalogItemTriliumNote(itemId);
+          return text({ itemId, deletedNoteId: noteId, notesSyncStatus: "not_synced" });
+        },
+      ),
+      tool(
+        "delete_trilium_note",
+        "Delete a Trilium note by noteId. Use only when the user explicitly gives or confirms the Trilium note ID to delete.",
+        { noteId: z.string() },
+        async ({ noteId }) => {
+          await deleteTriliumNote(noteId);
+          return text({ deletedNoteId: noteId });
         },
       ),
       tool(

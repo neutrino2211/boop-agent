@@ -82,6 +82,17 @@ function shouldCatalogInbound(content: string): boolean {
   return /\b(?:catalog|save|store|organize|archive|file this|remember this)\b/i.test(content);
 }
 
+function attachmentSummary(media: InboundMedia[]): string {
+  if (media.length === 0) return "no attachments";
+  return media
+    .map((item, index) => {
+      const name = item.filename ?? basenameFromUrl(item.url);
+      const type = item.contentType ?? "unknown";
+      return `${index + 1}:${name} (${type})`;
+    })
+    .join(", ");
+}
+
 function collectInboundMedia(value: unknown, out: InboundMedia[], seen: Set<string>): void {
   if (!value || typeof value !== "object") return;
   if (Array.isArray(value)) {
@@ -237,9 +248,10 @@ export function createSendblueRouter(): express.Router {
 
   router.post("/webhook", async (req, res) => {
     const { content, from_number, is_outbound, message_handle } = req.body ?? {};
+    const contentText = typeof content === "string" ? content : "";
     const media: InboundMedia[] = [];
     collectInboundMedia(req.body, media, new Set());
-    if (is_outbound || !content || !from_number) {
+    if (is_outbound || (!contentText && media.length === 0) || !from_number) {
       res.json({ ok: true, skipped: true });
       return;
     }
@@ -256,26 +268,35 @@ export function createSendblueRouter(): express.Router {
 
     const conversationId = `sms:${from_number}`;
     const turnTag = Math.random().toString(36).slice(2, 8);
-    const preview = content.length > 100 ? content.slice(0, 100) + "…" : content;
-    console.log(`[turn ${turnTag}] ← ${from_number}: ${JSON.stringify(preview)}`);
+    const preview = contentText.length > 100 ? contentText.slice(0, 100) + "…" : contentText;
+    console.log(
+      `[turn ${turnTag}] ← ${from_number}: ${JSON.stringify(preview || "(attachment-only)")}; ${attachmentSummary(media)}`,
+    );
     const start = Date.now();
 
-    broadcast("message_in", { conversationId, content, from_number, handle: message_handle });
+    broadcast("message_in", { conversationId, content: contentText, from_number, handle: message_handle });
     res.json({ ok: true });
 
     const stopTyping = startTypingLoop(from_number);
     try {
-      let contentForAgent = content;
-      if (content && media.length > 0 && shouldCatalogInbound(content)) {
+      let contentForAgent =
+        contentText ||
+        `Received ${media.length} attachment${media.length === 1 ? "" : "s"} via iMessage.`;
+      if (media.length > 0 && shouldCatalogInbound(contentText)) {
         const cataloged = await catalogInboundMedia({
           media,
-          content,
+          content: contentText,
           conversationId,
           messageHandle: message_handle,
         });
         if (cataloged.length > 0) {
-          contentForAgent = `${content}\n\nCataloged attachment item IDs: ${cataloged.join(", ")}`;
+          contentForAgent = `${contentText}\n\nCataloged attachment item IDs: ${cataloged.join(", ")}`;
+          console.log(`[turn ${turnTag}] cataloged ${cataloged.length}/${media.length} attachment(s): ${cataloged.join(", ")}`);
+        } else {
+          console.log(`[turn ${turnTag}] found ${media.length} attachment(s), none cataloged`);
         }
+      } else if (media.length > 0) {
+        console.log(`[turn ${turnTag}] found ${media.length} attachment(s), waiting for explicit catalog/save request`);
       }
       const reply = await handleUserMessage({
         conversationId,

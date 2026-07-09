@@ -9,7 +9,12 @@ import {
   type CatalogModality,
 } from "./catalog-models.js";
 import { processCatalogItem } from "./catalog-processing.js";
-import { syncCatalogItemToTrilium, testTriliumConnection } from "./trilium.js";
+import {
+  deleteCatalogItem,
+  deleteCatalogItemTriliumNote,
+  syncCatalogItemToTrilium,
+  testTriliumConnection,
+} from "./trilium.js";
 
 export type CatalogSource = "imessage" | "dashboard_upload" | "connector";
 
@@ -44,6 +49,12 @@ function isCatalogSource(value: string | undefined): value is CatalogSource {
 
 function isCatalogModality(value: string | undefined): value is CatalogModality {
   return value === "note" || value === "image" || value === "audio" || value === "video" || value === "file";
+}
+
+function truthy(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") return false;
+  return ["1", "true", "yes", "y"].includes(value.trim().toLowerCase());
 }
 
 function titleFromFilename(filename: string): string {
@@ -247,6 +258,25 @@ export function createCatalogRouter(): express.Router {
     }
   });
 
+  router.delete("/:itemId", async (req, res) => {
+    const itemId = firstParam(req.params.itemId);
+    if (!itemId) {
+      res.status(400).json({ error: "itemId required" });
+      return;
+    }
+    try {
+      const deleteSyncedNote =
+        truthy(firstParam(req.query.deleteSyncedNote as string | string[] | undefined)) ||
+        truthy(req.body?.deleteSyncedNote);
+      res.json({
+        ok: true,
+        ...(await deleteCatalogItem(itemId, { deleteTriliumNote: deleteSyncedNote })),
+      });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   router.post("/:itemId/sync", async (req, res) => {
     const itemId = firstParam(req.params.itemId);
     if (!itemId) {
@@ -256,6 +286,20 @@ export function createCatalogRouter(): express.Router {
     try {
       const noteId = await syncCatalogItemToTrilium(itemId);
       res.json({ ok: true, noteId });
+    } catch (err) {
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  router.delete("/:itemId/trilium", async (req, res) => {
+    const itemId = firstParam(req.params.itemId);
+    if (!itemId) {
+      res.status(400).json({ error: "itemId required" });
+      return;
+    }
+    try {
+      const noteId = await deleteCatalogItemTriliumNote(itemId);
+      res.json({ ok: true, itemId, deletedNoteId: noteId });
     } catch (err) {
       res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
     }

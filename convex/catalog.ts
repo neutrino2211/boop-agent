@@ -280,6 +280,29 @@ export const setNotesSync = mutation({
   },
 });
 
+export const clearNotesSync = mutation({
+  args: { itemId: v.string() },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("catalogItems")
+      .withIndex("by_item_id", (q) => q.eq("itemId", args.itemId))
+      .unique();
+    if (!existing) return null;
+    await ctx.db.patch(existing._id, {
+      notesSyncStatus: "not_synced",
+      syncedNoteId: undefined,
+      updatedAt: Date.now(),
+    });
+    await ctx.db.insert("catalogEvents", {
+      itemId: args.itemId,
+      eventType: "catalog.notes_sync_cleared",
+      data: "{}",
+      createdAt: Date.now(),
+    });
+    return existing._id;
+  },
+});
+
 export const addAsset = mutation({
   args: {
     itemId: v.string(),

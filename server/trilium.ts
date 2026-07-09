@@ -195,6 +195,48 @@ export async function syncCatalogItemToTrilium(itemId: string): Promise<string> 
   }
 }
 
+export async function deleteTriliumNote(noteId: string): Promise<void> {
+  const config = await getTriliumConfig();
+  if (!config) throw new Error("TRILIUM_BASE_URL and TRILIUM_ETAPI_TOKEN are required");
+  if (!config.syncEnabled) throw new Error("Trilium sync is disabled");
+  const trimmed = noteId.trim();
+  if (!trimmed) throw new Error("noteId is required");
+  const res = await triliumFetch(config, `/etapi/notes/${encodeURIComponent(trimmed)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    throw new Error(`Trilium delete note failed (${res.status}): ${await res.text()}`);
+  }
+}
+
+export async function deleteCatalogItemTriliumNote(itemId: string): Promise<string> {
+  const item = (await convex.query(api.catalog.get, { itemId })) as CatalogItemForSync | null;
+  if (!item) throw new Error(`Catalog item not found: ${itemId}`);
+  const noteId = item.syncedNoteId?.trim();
+  if (!noteId) throw new Error(`Catalog item ${itemId} has no synced Trilium note`);
+  await deleteTriliumNote(noteId);
+  await convex.mutation(api.catalog.clearNotesSync, { itemId });
+  return noteId;
+}
+
+export async function deleteCatalogItem(itemId: string, opts?: { deleteTriliumNote?: boolean }): Promise<{
+  itemId: string;
+  deleted: boolean;
+  deletedNoteId?: string;
+}> {
+  let deletedNoteId: string | undefined;
+  if (opts?.deleteTriliumNote) {
+    try {
+      deletedNoteId = await deleteCatalogItemTriliumNote(itemId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/has no synced Trilium note/i.test(message)) throw err;
+    }
+  }
+  const deleted = await convex.mutation(api.catalog.remove, { itemId });
+  return { itemId, deleted, deletedNoteId };
+}
+
 export async function testTriliumConnection(): Promise<{ ok: boolean; error?: string }> {
   const config = await getTriliumConfig();
   if (!config) return { ok: false, error: "missing Trilium config" };

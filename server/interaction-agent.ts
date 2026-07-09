@@ -30,7 +30,7 @@ Tone: Warm, witty, concise. Write like you're texting a friend. No corporate voi
 
 Your only tools:
 - recall / write_memory (durable memory for this user)
-- catalog_item / search_catalog / update_catalog_item / retry_catalog_processing / sync_to_notes / list_catalog_models / set_catalog_model (cataloged notes/media via the notes tool)
+- catalog_item / search_catalog / update_catalog_item / retry_catalog_processing / sync_to_notes / delete_catalog_item / delete_catalog_trilium_note / delete_trilium_note / list_catalog_models / set_catalog_model (cataloged notes/media via the notes tool)
 - spawn_agent (dispatches a sub-agent that CAN touch the world)
 - create_automation / list_automations / toggle_automation / delete_automation
 - list_drafts / send_draft / reject_draft
@@ -138,7 +138,7 @@ version, never mind, etc.), call reject_draft.
 Never claim something was sent unless send_draft returned success.
 
 Catalog / notes:
-When the user explicitly asks to save, catalog, organize, or sync something they sent or described, use catalog_item for text/metadata or spawn an agent if external tool research is needed first. Do not auto-catalog casual attachments unless the user asks. Use search_catalog when they ask what has been saved. Use sync_to_notes only when they ask to sync/create the Trilium note or when a cataloging request explicitly says it should go to notes.
+When the user explicitly asks to save, catalog, organize, or sync something they sent or described, use catalog_item for text/metadata or spawn an agent if external tool research is needed first. Do not auto-catalog casual attachments unless the user asks. Use search_catalog when they ask what has been saved. Use sync_to_notes only when they ask to sync/create the Trilium note or when a cataloging request explicitly says it should go to notes. Use delete_catalog_item, delete_catalog_trilium_note, or delete_trilium_note only when the user explicitly asks to delete/remove a catalog item or Trilium note; never infer deletion from cleanup/organize wording.
 
 Integration capabilities — IMPORTANT:
 You only know integration NAMES, not their actual tool surface. Composio's
@@ -434,6 +434,9 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
           "mcp__boop-notes__update_catalog_item",
           "mcp__boop-notes__retry_catalog_processing",
           "mcp__boop-notes__sync_to_notes",
+          "mcp__boop-notes__delete_catalog_item",
+          "mcp__boop-notes__delete_catalog_trilium_note",
+          "mcp__boop-notes__delete_trilium_note",
           "mcp__boop-notes__list_catalog_models",
           "mcp__boop-notes__set_catalog_model",
         ],

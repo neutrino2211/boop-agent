@@ -11,6 +11,7 @@ import {
   Clock03Icon,
   CloudUploadIcon,
   DatabaseSyncIcon,
+  Delete02Icon,
   Download01Icon,
   Edit02Icon,
   File01Icon,
@@ -18,6 +19,7 @@ import {
   FileSyncIcon,
   GridViewIcon,
   LayoutTable01Icon,
+  NoteRemoveIcon,
   Search01Icon,
   SortingAZ01Icon,
   Tag01Icon,
@@ -43,6 +45,8 @@ type SourceFilter = "all" | CatalogSource;
 interface CatalogActions {
   onRetryProcessing: (itemId: string) => void;
   onSyncToNotes: (itemId: string) => void;
+  onDeleteCatalogItem: (item: CatalogItem) => void;
+  onDeleteTriliumNote: (item: CatalogItem) => void;
   onUpdateMetadata: (itemId: string, patch: Partial<Pick<CatalogItem, "title" | "summary" | "tags" | "collectionIds">>) => void;
   onUploadAsset: (file: File) => void;
 }
@@ -208,6 +212,40 @@ export function CatalogPanel({ isDark }: { isDark: boolean }) {
       setBusyAction(`sync:${itemId}`);
       setOperationError(null);
       fetch(`/api/catalog/${encodeURIComponent(itemId)}/sync`, { method: "POST" })
+        .then(async (res) => {
+          if (!res.ok) throw new Error(await parseError(res));
+        })
+        .catch((err) => setOperationError(err instanceof Error ? err.message : String(err)))
+        .finally(() => setBusyAction(null));
+    },
+    onDeleteCatalogItem: (item) => {
+      const alsoDeleteNote = Boolean(item.syncedNoteId);
+      const message = alsoDeleteNote
+        ? `Delete "${item.title}" from the catalog?\n\nChoose OK to delete only the catalog entry and stored assets. The synced Trilium note will remain.`
+        : `Delete "${item.title}" from the catalog?\n\nThis removes the catalog entry and stored assets.`;
+      if (!window.confirm(message)) return;
+      setBusyAction(`delete:${item.id}`);
+      setOperationError(null);
+      fetch(`/api/catalog/${encodeURIComponent(item.id)}`, { method: "DELETE" })
+        .then(async (res) => {
+          if (!res.ok) throw new Error(await parseError(res));
+          setSelectedId(null);
+        })
+        .catch((err) => setOperationError(err instanceof Error ? err.message : String(err)))
+        .finally(() => setBusyAction(null));
+    },
+    onDeleteTriliumNote: (item) => {
+      if (!item.syncedNoteId) return;
+      if (
+        !window.confirm(
+          `Delete the synced Trilium note for "${item.title}"?\n\nThe catalog entry will stay, but it will be marked as not synced.`,
+        )
+      ) {
+        return;
+      }
+      setBusyAction(`delete-note:${item.id}`);
+      setOperationError(null);
+      fetch(`/api/catalog/${encodeURIComponent(item.id)}/trilium`, { method: "DELETE" })
         .then(async (res) => {
           if (!res.ok) throw new Error(await parseError(res));
         })
@@ -694,6 +732,22 @@ function CatalogDetail({
               if (primaryAsset?.storageUrl) window.open(primaryAsset.storageUrl, "_blank", "noopener,noreferrer");
             }}
           />
+          <ActionButton
+            icon={NoteRemoveIcon}
+            label={busyAction === `delete-note:${item.id}` ? "Deleting note" : "Delete note"}
+            isDark={isDark}
+            disabled={busyAction !== null || !item.syncedNoteId}
+            destructive
+            onClick={() => actions.onDeleteTriliumNote(item)}
+          />
+          <ActionButton
+            icon={Delete02Icon}
+            label={busyAction === `delete:${item.id}` ? "Deleting" : "Delete item"}
+            isDark={isDark}
+            disabled={busyAction !== null}
+            destructive
+            onClick={() => actions.onDeleteCatalogItem(item)}
+          />
         </div>
 
         <div className={`text-[11px] leading-relaxed ${muted}`}>
@@ -836,24 +890,29 @@ function ActionButton({
   label,
   isDark,
   disabled,
+  destructive,
   onClick,
 }: {
   icon: any;
   label: string;
   isDark: boolean;
   disabled: boolean;
+  destructive?: boolean;
   onClick: () => void;
 }) {
+  const tone = destructive
+    ? isDark
+      ? "border-rose-500/25 bg-rose-500/10 text-rose-200 hover:bg-rose-500/15"
+      : "border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+    : isDark
+      ? "border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800"
+      : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100";
   return (
     <button
       type="button"
       disabled={disabled}
       onClick={onClick}
-      className={`inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors disabled:opacity-55 disabled:cursor-not-allowed ${
-        isDark
-          ? "border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800"
-          : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
-      }`}
+      className={`inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors disabled:opacity-55 disabled:cursor-not-allowed ${tone}`}
     >
       <HugeiconsIcon icon={icon} size={15} />
       {label}
