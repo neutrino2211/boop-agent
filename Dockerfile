@@ -19,6 +19,9 @@ RUN --mount=type=cache,target=/root/.npm \
 
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 ENV BOOP_ENABLE_LOCAL_EMBEDDINGS=false
 ENV BOOP_ENABLE_BGE_MODEL=false
