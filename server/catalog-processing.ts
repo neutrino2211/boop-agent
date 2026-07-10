@@ -46,6 +46,7 @@ interface MediaBytes {
 }
 
 const MAX_TEXT_CHARS = 45_000;
+const MAX_SUMMARY_CHARS = 800;
 const MAX_TAGS = 12;
 const OPENAI_TRANSCRIPTION_EXTS = new Set([
   ".flac",
@@ -131,7 +132,17 @@ function cleanTags(existing: string[], suggested: unknown, modality: CatalogModa
 }
 
 function parseAnalysis(text: string, item: CatalogItemForProcessing): CatalogAnalysis {
-  const parsed = JSON.parse(extractJsonObject(text)) as Record<string, unknown>;
+  const trimmed = text.trim();
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(extractJsonObject(trimmed)) as Record<string, unknown>;
+  } catch (err) {
+    if (!trimmed) throw err;
+    return {
+      summary: trimmed.slice(0, MAX_SUMMARY_CHARS),
+      tags: cleanTags(item.tags, [], item.modality),
+    };
+  }
   const summary =
     typeof parsed.summary === "string" && parsed.summary.trim()
       ? parsed.summary.trim()
@@ -148,6 +159,31 @@ function parseAnalysis(text: string, item: CatalogItemForProcessing): CatalogAna
     summary,
     tags: cleanTags(item.tags, parsed.tags, item.modality),
     extractedText,
+    transcript,
+  };
+}
+
+function compactWhitespace(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function summaryFromTranscript(transcript: string, fallbackTitle: string): string {
+  const compact = compactWhitespace(transcript);
+  if (!compact) return `${fallbackTitle} was transcribed but had no intelligible speech.`;
+  const firstSentence = compact.match(/^(.{40,400}?[.!?])\s/)?.[1];
+  const candidate = firstSentence || compact;
+  return candidate.length <= MAX_SUMMARY_CHARS
+    ? candidate
+    : `${candidate.slice(0, MAX_SUMMARY_CHARS - 1).trim()}…`;
+}
+
+function transcriptFallbackAnalysis(
+  item: CatalogItemForProcessing,
+  transcript: string,
+): CatalogAnalysis {
+  return {
+    summary: summaryFromTranscript(transcript, item.title),
+    tags: cleanTags(item.tags, ["transcript"], item.modality),
     transcript,
   };
 }
@@ -606,19 +642,24 @@ async function analyzeAudio(
     media.asset.contentType,
     modelRef,
   );
-  const analysis = await analyzeWithPi({
-    item,
-    modelRef,
-    prompt: [
-      basePrompt(item),
-      "",
-      "Summarize and tag this audio transcript for retrieval.",
-      "",
-      "Transcript:",
-      transcript.slice(0, MAX_TEXT_CHARS),
-    ].join("\n"),
-  });
-  return { ...analysis, transcript: analysis.transcript || transcript };
+  try {
+    const analysis = await analyzeWithPi({
+      item,
+      modelRef,
+      prompt: [
+        basePrompt(item),
+        "",
+        "Summarize and tag this audio transcript for retrieval.",
+        "",
+        "Transcript:",
+        transcript.slice(0, MAX_TEXT_CHARS),
+      ].join("\n"),
+    });
+    return { ...analysis, transcript: analysis.transcript || transcript };
+  } catch (err) {
+    console.warn("[catalog-processing] audio transcript summarization skipped", err);
+    return transcriptFallbackAnalysis(item, transcript);
+  }
 }
 
 async function analyzeVideo(
@@ -638,19 +679,25 @@ async function analyzeVideo(
       console.warn("[catalog-processing] video audio transcription skipped", err);
     }
   }
-  const analysis = await analyzeWithPi({
-    item,
-    modelRef,
-    prompt: [
-      basePrompt(item),
-      "",
-      "Analyze this representative video frame and any transcript for cataloging.",
-      transcript ? "\nTranscript:" : "",
-      transcript ? transcript.slice(0, MAX_TEXT_CHARS) : "",
-    ].join("\n"),
-    images: [frame],
-  });
-  return { ...analysis, transcript: analysis.transcript || transcript };
+  try {
+    const analysis = await analyzeWithPi({
+      item,
+      modelRef,
+      prompt: [
+        basePrompt(item),
+        "",
+        "Analyze this representative video frame and any transcript for cataloging.",
+        transcript ? "\nTranscript:" : "",
+        transcript ? transcript.slice(0, MAX_TEXT_CHARS) : "",
+      ].join("\n"),
+      images: [frame],
+    });
+    return { ...analysis, transcript: analysis.transcript || transcript };
+  } catch (err) {
+    if (!transcript) throw err;
+    console.warn("[catalog-processing] video frame summarization skipped", err);
+    return transcriptFallbackAnalysis(item, transcript);
+  }
 }
 
 async function analyzeFile(
