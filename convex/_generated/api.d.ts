@@ -18,6 +18,7 @@ import type * as drafts from "../drafts.js";
 import type * as memoryEvents from "../memoryEvents.js";
 import type * as memoryRecords from "../memoryRecords.js";
 import type * as messages from "../messages.js";
+import type * as pendingAttachments from "../pendingAttachments.js";
 import type * as sendblueDedup from "../sendblueDedup.js";
 import type * as settings from "../settings.js";
 import type * as usageRecords from "../usageRecords.js";
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   memoryEvents: typeof memoryEvents;
   memoryRecords: typeof memoryRecords;
   messages: typeof messages;
+  pendingAttachments: typeof pendingAttachments;
   sendblueDedup: typeof sendblueDedup;
   settings: typeof settings;
   usageRecords: typeof usageRecords;

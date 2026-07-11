@@ -304,6 +304,52 @@ export default defineSchema({
     .index("by_item_id", ["itemId"])
     .index("by_storage_id", ["storageId"]),
 
+  pendingAttachments: defineTable({
+    attachmentRef: v.string(),
+    conversationId: v.string(),
+    source: v.union(
+      v.literal("imessage"),
+      v.literal("dashboard_upload"),
+      v.literal("connector"),
+    ),
+    messageHandle: v.optional(v.string()),
+    storageId: v.id("_storage"),
+    filename: v.string(),
+    contentType: v.string(),
+    sizeBytes: v.number(),
+    modality: v.union(
+      v.literal("note"),
+      v.literal("image"),
+      v.literal("audio"),
+      v.literal("video"),
+      v.literal("file"),
+    ),
+    status: v.union(
+      v.literal("available"),
+      v.literal("cataloged"),
+      v.literal("failed"),
+    ),
+    sourceText: v.optional(v.string()),
+    summary: v.optional(v.string()),
+    extractedText: v.optional(v.string()),
+    transcript: v.optional(v.string()),
+    tags: v.array(v.string()),
+    processingModel: v.optional(v.string()),
+    processingError: v.optional(v.string()),
+    catalogItemId: v.optional(v.string()),
+    searchText: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_attachment_ref", ["attachmentRef"])
+    .index("by_conversation_and_created_at", ["conversationId", "createdAt"])
+    .index("by_conversation_and_status", ["conversationId", "status"])
+    .index("by_storage_id", ["storageId"])
+    .searchIndex("search_pending_attachments", {
+      searchField: "searchText",
+      filterFields: ["conversationId", "modality", "status"],
+    }),
+
   catalogCollections: defineTable({
     collectionId: v.string(),
     name: v.string(),

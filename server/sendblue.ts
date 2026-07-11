@@ -1,4 +1,5 @@
 import express from "express";
+import { randomUUID } from "node:crypto";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { handleUserMessage } from "./interaction-agent.js";
@@ -76,6 +77,8 @@ interface InboundMedia {
 }
 
 interface PreparedInboundMedia {
+  ref?: string;
+  storageId?: string;
   url: string;
   filename: string;
   contentType: string;
@@ -108,6 +111,10 @@ function contentDispositionFilename(value: string | null): string | undefined {
   return value.match(/filename="?([^";]+)"?/i)?.[1]?.trim();
 }
 
+function makeAttachmentRef(): string {
+  return `att_${Date.now().toString(36)}_${randomUUID().slice(0, 8)}`;
+}
+
 function shouldCatalogInbound(content: string): boolean {
   return /\b(?:catalog|save|store|organize|archive|file this|remember this)\b/i.test(content);
 }
@@ -133,11 +140,13 @@ function formatAttachmentContext(attachments: PreparedInboundMedia[]): string {
   if (attachments.length === 0) return "";
   const lines = [
     "Inbound attachments were automatically processed before this turn. Use this context to answer the user; do not claim you cannot see or hear the attachments.",
+    "If the user explicitly asks to save/catalog/sync an attachment, call catalog_attachment with its Attachment ref.",
   ];
   for (const [index, attachment] of attachments.entries()) {
     const mb = (attachment.sizeBytes / 1_000_000).toFixed(2);
     lines.push("");
     lines.push(`Attachment ${index + 1}: ${attachment.filename}`);
+    if (attachment.ref) lines.push(`Attachment ref: ${attachment.ref}`);
     lines.push(`Content type: ${attachment.contentType}; size: ${mb} MB`);
     if (attachment.analysis) {
       const analysis = attachment.analysis;
@@ -199,6 +208,7 @@ async function analyzeInboundMedia(
   content: string,
   conversationId: string,
   turnTag: string,
+  messageHandle?: string,
 ): Promise<void> {
   for (const attachment of attachments) {
     try {
@@ -216,6 +226,30 @@ async function analyzeInboundMedia(
       attachment.processingError = err instanceof Error ? err.message : String(err);
       console.warn(`[turn ${turnTag}] attachment processing failed for ${attachment.filename}`, err);
     }
+    const storageId = await uploadToConvexStorage(attachment.bytes, attachment.contentType);
+    const attachmentRef = makeAttachmentRef();
+    const modality = attachment.analysis?.modality ?? modalityForContentType(attachment.contentType, attachment.filename);
+    await convex.mutation(api.pendingAttachments.upsert, {
+      attachmentRef,
+      conversationId,
+      source: "imessage",
+      messageHandle,
+      storageId: storageId as any,
+      filename: attachment.filename,
+      contentType: attachment.contentType,
+      sizeBytes: attachment.sizeBytes,
+      modality,
+      status: attachment.processingError ? "failed" : "available",
+      sourceText: content,
+      summary: attachment.analysis?.summary,
+      extractedText: attachment.analysis?.extractedText,
+      transcript: attachment.analysis?.transcript,
+      tags: attachment.analysis?.tags ?? ["imessage", modality],
+      processingModel: attachment.analysis?.model,
+      processingError: attachment.processingError,
+    });
+    attachment.ref = attachmentRef;
+    attachment.storageId = storageId;
   }
 }
 
@@ -269,7 +303,7 @@ async function catalogInboundMedia(args: {
   const itemIds: string[] = [];
   for (const media of args.media) {
     try {
-      const storageId = await uploadToConvexStorage(media.bytes, media.contentType);
+      const storageId = media.storageId ?? await uploadToConvexStorage(media.bytes, media.contentType);
       const modality = media.analysis?.modality ?? modalityForContentType(media.contentType, media.filename);
       const item = (await createCatalogItemWithOptionalAsset({
         title: media.filename.replace(/\.[a-z0-9]+$/i, "") || media.filename,
@@ -291,7 +325,15 @@ async function catalogInboundMedia(args: {
         },
       })) as { itemId?: string; id?: string } | null;
       const itemId = item?.itemId ?? item?.id;
-      if (itemId) itemIds.push(itemId);
+      if (itemId) {
+        itemIds.push(itemId);
+        if (media.ref) {
+          await convex.mutation(api.pendingAttachments.markCataloged, {
+            attachmentRef: media.ref,
+            catalogItemId: itemId,
+          });
+        }
+      }
     } catch (err) {
       console.warn("[sendblue] failed to catalog inbound media", err);
     }
@@ -400,7 +442,7 @@ export function createSendblueRouter(): express.Router {
     try {
       const attachments = media.length > 0 ? await downloadInboundMedia(media) : [];
       if (attachments.length > 0) {
-        await analyzeInboundMedia(attachments, contentText, conversationId, turnTag);
+        await analyzeInboundMedia(attachments, contentText, conversationId, turnTag, message_handle);
       }
       const attachmentContext = formatAttachmentContext(attachments);
       const downloadFailureContext =

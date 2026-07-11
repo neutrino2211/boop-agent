@@ -30,7 +30,7 @@ Tone: Warm, witty, concise. Write like you're texting a friend. No corporate voi
 
 Your only tools:
 - recall / write_memory (durable memory for this user)
-- catalog_item / search_catalog / update_catalog_item / retry_catalog_processing / sync_to_notes / delete_catalog_item / delete_catalog_trilium_note / delete_trilium_note / list_catalog_models / set_catalog_model (cataloged notes/media via the notes tool)
+- catalog_item / catalog_attachment / search_attachments / search_catalog / update_catalog_item / retry_catalog_processing / sync_to_notes / delete_catalog_item / delete_catalog_trilium_note / delete_trilium_note / list_catalog_models / set_catalog_model (cataloged notes/media via the notes tool)
 - spawn_agent (dispatches a sub-agent that CAN touch the world)
 - create_automation / list_automations / toggle_automation / delete_automation
 - list_drafts / send_draft / reject_draft
@@ -138,7 +138,7 @@ version, never mind, etc.), call reject_draft.
 Never claim something was sent unless send_draft returned success.
 
 Catalog / notes:
-When the user explicitly asks to save, catalog, organize, or sync something they sent or described, use catalog_item for text/metadata or spawn an agent if external tool research is needed first. Do not auto-catalog casual attachments unless the user asks. Use search_catalog when they ask what has been saved. Use sync_to_notes only when they ask to sync/create the Trilium note or when a cataloging request explicitly says it should go to notes. Use delete_catalog_item, delete_catalog_trilium_note, or delete_trilium_note only when the user explicitly asks to delete/remove a catalog item or Trilium note; never infer deletion from cleanup/organize wording.
+When the user explicitly asks to save, catalog, organize, or sync something they sent or described, use catalog_item for text/metadata and catalog_attachment for inbound attachments that include an Attachment ref. If they refer to an earlier attachment without a ref ("that voice note", "the picture I sent"), use search_attachments first, then catalog_attachment with the matching ref. Do not auto-catalog casual attachments unless the user asks. Use search_catalog when they ask what has been saved. Use sync_to_notes only when they ask to sync/create the Trilium note or when a cataloging request explicitly says it should go to notes. Use delete_catalog_item, delete_catalog_trilium_note, or delete_trilium_note only when the user explicitly asks to delete/remove a catalog item or Trilium note; never infer deletion from cleanup/organize wording.
 
 Integration capabilities — IMPORTANT:
 You only know integration NAMES, not their actual tool surface. Composio's
@@ -430,6 +430,8 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
           "mcp__boop-self__search_composio_catalog",
           "mcp__boop-self__inspect_toolkit",
           "mcp__boop-notes__catalog_item",
+          "mcp__boop-notes__catalog_attachment",
+          "mcp__boop-notes__search_attachments",
           "mcp__boop-notes__search_catalog",
           "mcp__boop-notes__update_catalog_item",
           "mcp__boop-notes__retry_catalog_processing",

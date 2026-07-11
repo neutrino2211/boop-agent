@@ -4,6 +4,7 @@ import { convex } from "./convex-client.js";
 import { createSdkMcpServer, tool } from "./agent-sdk.js";
 import { getCatalogModel, listCatalogModels, setCatalogModel, type CatalogModality } from "./catalog-models.js";
 import { processCatalogItem } from "./catalog-processing.js";
+import { createCatalogItemWithOptionalAsset } from "./catalog-routes.js";
 import {
   deleteCatalogItem,
   deleteCatalogItemTriliumNote,
@@ -14,6 +15,7 @@ import {
 const modalityEnum = z.enum(["note", "image", "audio", "video", "file"]);
 const sourceEnum = z.enum(["imessage", "dashboard_upload", "connector"]);
 const statusEnum = z.enum(["draft", "processing", "ready", "failed", "synced"]);
+const attachmentStatusEnum = z.enum(["available", "cataloged", "failed"]);
 const sortEnum = z.enum(["newest", "oldest", "title", "updated"]);
 
 function text(content: unknown) {
@@ -25,6 +27,14 @@ function text(content: unknown) {
       },
     ],
   };
+}
+
+function titleFromFilename(filename: string): string {
+  return filename
+    .replace(/\.[a-z0-9]+$/i, "")
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim() || filename;
 }
 
 export function createNotesMcp(conversationId?: string) {
@@ -75,6 +85,160 @@ export function createNotesMcp(conversationId?: string) {
             );
           }
           return text({ itemId, status: args.processNow ? "processing" : "draft", model });
+        },
+      ),
+      tool(
+        "catalog_attachment",
+        "Create an asset-backed catalog item from a pending inbound iMessage attachment. Use this when the user explicitly asks to save/catalog/organize an attachment and the message context includes an attachmentRef like att_...",
+        {
+          attachmentRef: z
+            .string()
+            .optional()
+            .describe("Attachment ref from the message context, e.g. att_mabc123_xxxxxxxx. If omitted, uses the only recent attachment in this conversation."),
+          title: z.string().optional().describe("Optional title override."),
+          summary: z.string().optional().describe("Optional summary override."),
+          tags: z.array(z.string()).optional().default([]),
+          collectionIds: z.array(z.string()).optional().default([]),
+          syncToNotes: z.boolean().optional().default(false),
+        },
+        async (args) => {
+          if (!conversationId) {
+            return text({ error: "catalog_attachment requires a conversation context" });
+          }
+          let attachment = null;
+          if (args.attachmentRef) {
+            attachment = await convex.query(api.pendingAttachments.get, {
+              attachmentRef: args.attachmentRef,
+              conversationId,
+            });
+          } else {
+            const recent = await convex.query(api.pendingAttachments.listRecent, {
+              conversationId,
+              status: "available",
+              limit: 2,
+            });
+            attachment = recent.length === 1 ? recent[0] : null;
+          }
+          if (!attachment) {
+            const recent = await convex.query(api.pendingAttachments.listRecent, {
+              conversationId,
+              limit: 10,
+            });
+            return text({
+              error:
+                args.attachmentRef
+                  ? `Attachment not found or expired: ${args.attachmentRef}`
+                  : "No unambiguous recent attachment found. Pass attachmentRef from the message context.",
+              recentAttachments: recent.map((item) => ({
+                attachmentRef: item.attachmentRef,
+                filename: item.filename,
+                contentType: item.contentType,
+                summary: item.summary,
+                transcript: item.transcript,
+                status: item.status,
+                createdAt: item.createdAt,
+              })),
+            });
+          }
+          if (attachment.status === "cataloged" && attachment.catalogItemId) {
+            return text({
+              itemId: attachment.catalogItemId,
+              attachmentRef: attachment.attachmentRef,
+              filename: attachment.filename,
+              modality: attachment.modality,
+              status: "already_cataloged",
+            });
+          }
+          const modality = attachment.modality as CatalogModality;
+          const item = (await createCatalogItemWithOptionalAsset({
+            title: args.title?.trim() || titleFromFilename(attachment.filename),
+            summary:
+              args.summary?.trim() ||
+              attachment.summary ||
+              attachment.sourceText ||
+              `${attachment.filename} sent via iMessage.`,
+            modality,
+            source: "imessage",
+            status: attachment.status === "available" ? "ready" : "processing",
+            tags: [
+              "imessage",
+              modality,
+              ...((attachment.tags ?? []).filter((tag) => tag !== "imessage" && tag !== modality)),
+              ...(args.tags ?? []),
+            ],
+            collectionIds: args.collectionIds,
+            sourceConversationId: conversationId,
+            sourceMessageHandle: attachment.messageHandle,
+            extractedText: attachment.extractedText,
+            transcript: attachment.transcript,
+            processNow: attachment.status !== "available",
+            asset: {
+              storageId: attachment.storageId,
+              filename: attachment.filename,
+              contentType: attachment.contentType,
+              sizeBytes: attachment.sizeBytes,
+            },
+          })) as { itemId?: string; id?: string; notesSyncStatus?: string } | null;
+          const itemId = item?.itemId ?? item?.id;
+          if (itemId) {
+            await convex.mutation(api.pendingAttachments.markCataloged, {
+              attachmentRef: attachment.attachmentRef,
+              catalogItemId: itemId,
+            });
+          }
+          let noteId: string | undefined;
+          if (args.syncToNotes && itemId) {
+            noteId = await syncCatalogItemToTrilium(itemId);
+          }
+          return text({
+            itemId,
+            attachmentRef: attachment.attachmentRef,
+            filename: attachment.filename,
+            modality,
+            notesSyncStatus: noteId ? "synced" : item?.notesSyncStatus,
+            noteId,
+          });
+        },
+      ),
+      tool(
+        "search_attachments",
+        "Search or list pending inbound attachments by transcript, description, filename, modality, or status. Use this when the user asks to save/find/reference something they sent earlier but does not provide the attachmentRef.",
+        {
+          query: z.string().optional(),
+          modality: modalityEnum.optional(),
+          status: attachmentStatusEnum.optional(),
+          limit: z.number().int().min(1).max(50).optional().default(10),
+        },
+        async (args) => {
+          if (!conversationId) return text({ error: "search_attachments requires a conversation context" });
+          const results = args.query?.trim()
+            ? await convex.query(api.pendingAttachments.search, {
+                conversationId,
+                query: args.query,
+                modality: args.modality,
+                status: args.status,
+                limit: args.limit,
+              })
+            : await convex.query(api.pendingAttachments.listRecent, {
+                conversationId,
+                status: args.status,
+                limit: args.limit,
+              });
+          return text(
+            results.map((item) => ({
+              attachmentRef: item.attachmentRef,
+              filename: item.filename,
+              contentType: item.contentType,
+              modality: item.modality,
+              status: item.status,
+              summary: item.summary,
+              extractedText: item.extractedText,
+              transcript: item.transcript,
+              tags: item.tags,
+              catalogItemId: item.catalogItemId,
+              createdAt: item.createdAt,
+            })),
+          );
         },
       ),
       tool(

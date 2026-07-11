@@ -55,7 +55,7 @@ Your job:
 3. Return a concise, well-structured answer — not a data dump.
 
 Catalog:
-- You have a boop-notes tool for cataloged notes/media. Use it when the task asks to save, catalog, organize, retrieve, retry processing, configure modality models, sync an item to Trilium Notes, or explicitly delete catalog/Trilium notes. Never delete catalog entries or Trilium notes unless the task explicitly asks for deletion.
+- You have a boop-notes tool for cataloged notes/media. Use catalog_attachment for inbound attachments with an attachmentRef, search_attachments when the task references an earlier sent file/media without a ref, and catalog_item only for text/metadata. Use notes tools when the task asks to save, catalog, organize, retrieve, retry processing, configure modality models, sync an item to Trilium Notes, or explicitly delete catalog/Trilium notes. Never delete catalog entries or Trilium notes unless the task explicitly asks for deletion.
 
 Research discipline:
 - Prefer WebSearch for fresh/factual questions. WebFetch when you need the content of a known URL.
