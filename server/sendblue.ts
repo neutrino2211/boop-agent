@@ -471,24 +471,26 @@ export function createSendblueRouter(): express.Router {
       } else if (attachments.length > 0) {
         console.log(`[turn ${turnTag}] found ${attachments.length} attachment(s), waiting for explicit catalog/save request`);
       }
-      const reply = await handleUserMessage({
+      const segments = await handleUserMessage({
         conversationId,
         content: contentForAgent,
         turnTag,
         onThinking: (t) => broadcast("thinking", { conversationId, t }),
       });
-      if (reply) {
+      if (segments.length > 0) {
         const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-        const replyPreview = reply.length > 100 ? reply.slice(0, 100) + "…" : reply;
+        const totalChars = segments.reduce((sum, s) => sum + s.length, 0);
         console.log(
-          `[turn ${turnTag}] → reply (${elapsed}s, ${reply.length} chars): ${JSON.stringify(replyPreview)}`,
+          `[turn ${turnTag}] → ${segments.length} segment(s) (${elapsed}s, ${totalChars} chars)`,
         );
-        await sendImessage(from_number, reply);
-        await convex.mutation(api.messages.send, {
-          conversationId,
-          role: "assistant",
-          content: reply,
-        });
+        for (const segment of segments) {
+          await sendImessage(from_number, segment);
+          await convex.mutation(api.messages.send, {
+            conversationId,
+            role: "assistant",
+            content: segment,
+          });
+        }
       } else {
         console.log(`[turn ${turnTag}] → (no reply)`);
       }
