@@ -15,6 +15,7 @@ import {
   RUNTIME_REASONING_LEVELS,
   getRuntimeModel,
   getRuntimeReasoningLevel,
+  getRuntimeSplitResponses,
   resolveReasoningInput,
   resolveModelInput,
   setRuntimeReasoningLevel,
@@ -42,10 +43,12 @@ export function createSelfMcp() {
           const tzInfo = await describeUserNow();
           const activeModel = await getRuntimeModel();
           const reasoningLevel = await getRuntimeReasoningLevel();
+          const splitResponses = await getRuntimeSplitResponses();
           const envModel = normalizeModelOrDefault(process.env.BOOP_MODEL ?? DEFAULT_MODEL);
           const config = {
             model: activeModel,
             reasoningLevel,
+            splitResponses,
             envDefault: envModel,
             availableModels: [...KNOWN_MODELS],
             availableReasoningLevels: [...RUNTIME_REASONING_LEVELS],

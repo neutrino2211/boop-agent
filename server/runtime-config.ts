@@ -10,10 +10,13 @@ import {
 
 const MODEL_KEY = "model";
 const REASONING_KEY = "reasoning";
+const SPLIT_KEY = "split_responses";
 const MODEL_TTL_MS = 30 * 1000;
 const REASONING_TTL_MS = 30 * 1000;
+const SPLIT_TTL_MS = 30 * 1000;
 let cachedModel: { at: number; value: string } | null = null;
 let cachedReasoning: { at: number; value: RuntimeReasoningLevel } | null = null;
+let cachedSplit: { at: number; value: string } | null = null;
 
 export const RUNTIME_REASONING_LEVELS = [
   "off",
@@ -101,4 +104,33 @@ export async function setRuntimeReasoningLevel(
 export async function clearRuntimeReasoningLevel(): Promise<void> {
   await convex.mutation(api.settings.clear, { key: REASONING_KEY });
   cachedReasoning = null;
+}
+
+function envSplitFallback(): string {
+  const envValue = process.env.BOOP_SPLIT_RESPONSES;
+  if (envValue === "on" || envValue === "off") return envValue;
+  return "on";
+}
+
+export async function getRuntimeSplitResponses(): Promise<string> {
+  if (cachedSplit && Date.now() - cachedSplit.at < SPLIT_TTL_MS) return cachedSplit.value;
+  let stored: string | null = null;
+  try {
+    stored = await convex.query(api.settings.get, { key: SPLIT_KEY });
+  } catch (err) {
+    console.warn("[runtime-config] settings:get(split_responses) failed", err);
+  }
+  const value = stored === "on" || stored === "off" ? stored : envSplitFallback();
+  cachedSplit = { at: Date.now(), value };
+  return value;
+}
+
+export async function setRuntimeSplitResponses(value: string): Promise<void> {
+  await convex.mutation(api.settings.set, { key: SPLIT_KEY, value });
+  cachedSplit = { at: Date.now(), value };
+}
+
+export async function clearRuntimeSplitResponses(): Promise<void> {
+  await convex.mutation(api.settings.clear, { key: SPLIT_KEY });
+  cachedSplit = null;
 }

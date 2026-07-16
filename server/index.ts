@@ -243,8 +243,8 @@ async function main() {
       return;
     }
     try {
-      const reply = await handleUserMessage({ conversationId, content });
-      res.json({ reply });
+      const segments = await handleUserMessage({ conversationId, content });
+      res.json({ replies: segments });
     } catch (err) {
       console.error(err);
       res.status(500).json({ error: String(err) });

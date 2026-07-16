@@ -13,7 +13,7 @@ import { createAutomationMcp } from "./automation-tools.js";
 import { createDraftDecisionMcp } from "./draft-tools.js";
 import { createSelfMcp } from "./self-tools.js";
 import { createNotesMcp } from "./notes-tools.js";
-import { getRuntimeModel, getRuntimeReasoningLevel } from "./runtime-config.js";
+  import { getRuntimeModel, getRuntimeReasoningLevel, getRuntimeSplitResponses } from "./runtime-config.js";
 import { broadcast } from "./broadcast.js";
 import { sendImessage } from "./sendblue.js";
 import { aggregateUsageFromResult, EMPTY_USAGE, type UsageTotals } from "./usage.js";
@@ -177,14 +177,29 @@ before saving.
 
 Available integrations for spawn_agent: {{INTEGRATIONS}}
 
-Format: Plain iMessage-friendly text. Markdown sparingly. Keep replies under ~400 chars when you can.`;
+Format: Plain iMessage-friendly text. Markdown sparingly. Keep replies under ~400 chars when you can.
+
+Consecutive messages (optional):
+If your reply runs long (over ~400 chars), consider splitting it into several short consecutive messages. Place \`---NEXT---\` on its own line between each segment. Each segment becomes a separate iMessage — keeping the conversation feeling snappy instead of one massive text wall. 2-4 segments max. Don't use this for every reply — only when the content naturally breaks into chunks.`;
 
 const DEFAULT_GLITCH_FALLBACK = "Hmm — got tangled up there. Want to try that again?";
-const ALT_GLITCH_FALLBACK = "I’m here, but that reply glitched. Can you send that once more?";
+const ALT_GLITCH_FALLBACK = "I'm here, but that reply glitched. Can you send that once more?";
 const CANNED_REFUSAL =
   /^i['’]?m sorry,?\s*but i cannot assist with that request\.?$/i;
 const BENIGN_SMALLTALK =
   /^(?:hi+|hello+|hey+|yo+|sup|what'?s up|good (?:morning|afternoon|evening)|thanks|thank you|ok(?:ay)?|cool|why not\??)$/i;
+
+const MESSAGE_BREAK = "\n---NEXT---\n";
+const MAX_SEGMENTS = 4;
+
+function splitResponse(text: string, enabled: boolean): string[] {
+  if (!enabled) return [text];
+  const segments = text
+    .split(MESSAGE_BREAK)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return segments.length > 1 ? segments.slice(0, MAX_SEGMENTS) : [text];
+}
 
 interface HandleOpts {
   conversationId: string;
@@ -243,7 +258,7 @@ function friendlyModelFailure(err: unknown): string | null {
   return null;
 }
 
-export async function handleUserMessage(opts: HandleOpts): Promise<string> {
+export async function handleUserMessage(opts: HandleOpts): Promise<string[]> {
   const turnId = randomId("turn");
   let integrations = await ensureIntegrationsReady();
   if (integrations.length === 0) {
@@ -533,6 +548,9 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
     }
   }
 
+  const splitEnabled = (await getRuntimeSplitResponses()) === "on";
+  const segments = splitResponse(reply, splitEnabled);
+
   if (usage.costUsd > 0 || usage.inputTokens > 0) {
     log(
       `cost: in/out ${usage.inputTokens}/${usage.outputTokens}, cache r/w ${usage.cacheReadTokens}/${usage.cacheCreationTokens}, $${usage.costUsd.toFixed(4)}`,
@@ -551,7 +569,9 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
     });
   }
 
-  broadcast("assistant_message", { conversationId: opts.conversationId, content: reply });
+  for (const segment of segments) {
+    broadcast("assistant_message", { conversationId: opts.conversationId, content: segment });
+  }
 
   // Background extraction — fire-and-forget; don't block the reply.
   // Skip on proactive turns: the "user message" is a synthetic
@@ -569,5 +589,5 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string> {
     }).catch((err) => console.error("[interaction] extraction error", err));
   }
 
-  return reply;
+  return segments;
 }

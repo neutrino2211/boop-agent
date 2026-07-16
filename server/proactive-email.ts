@@ -302,20 +302,22 @@ async function dispatchProactiveNotice(summary: string): Promise<void> {
     return;
   }
   const conversationId = `sms:${phone}`;
-  const reply = await handleUserMessage({
+  const segments = await handleUserMessage({
     conversationId,
     content: `[proactive notice] ${summary}`,
     kind: "proactive",
   });
   // handleUserMessage only sends iMessage from inside send_ack; the final
   // reply is the caller's responsibility.
-  if (reply && reply !== "(no reply)") {
-    await sendImessage(phone, reply);
-    await convex.mutation(api.messages.send, {
-      conversationId,
-      role: "assistant",
-      content: reply,
-    });
+  if (segments.length > 0 && segments[0] !== "(no reply)") {
+    for (const segment of segments) {
+      await sendImessage(phone, segment);
+      await convex.mutation(api.messages.send, {
+        conversationId,
+        role: "assistant",
+        content: segment,
+      });
+    }
   } else {
     // IA stayed silent — fall back to the raw classifier summary so the
     // user still gets the notice; otherwise classification was a no-op.
