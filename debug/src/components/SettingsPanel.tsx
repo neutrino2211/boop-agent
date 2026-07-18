@@ -4,6 +4,7 @@ import { api } from "../../../convex/_generated/api.js";
 import { ProviderSettingsSection } from "./ProviderSettingsSection.js";
 import { CatalogModelSettingsSection } from "./CatalogModelSettingsSection.js";
 import { TriliumSettingsSection } from "./TriliumSettingsSection.js";
+import { SshSettingsSection } from "./SshSettingsSection.js";
 
 interface ToggleSetting {
   kind: "toggle";
@@ -91,6 +92,7 @@ export function SettingsPanel({ isDark }: { isDark: boolean }) {
         <ProviderSettingsSection isDark={isDark} />
         <TriliumSettingsSection isDark={isDark} />
         <CatalogModelSettingsSection isDark={isDark} />
+        <SshSettingsSection isDark={isDark} />
       </div>
     </div>
   );
