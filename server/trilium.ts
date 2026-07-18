@@ -126,7 +126,7 @@ async function createNote(config: TriliumConfig, item: CatalogItemForSync): Prom
   const body = {
     parentNoteId: config.rootNoteId ?? "root",
     title: item.title,
-    type: "markdown",
+    type: "text",
     content: renderCatalogNote(item),
   };
   const res = await triliumFetch(config, "/etapi/create-note", {
@@ -150,7 +150,7 @@ async function updateNoteContent(
 ): Promise<void> {
   const res = await triliumFetch(config, `/etapi/notes/${encodeURIComponent(noteId)}/content`, {
     method: "PUT",
-    headers: { "Content-Type": "text/markdown" },
+    headers: { "Content-Type": "text/plain" },
     body: renderCatalogNote(item),
   });
   if (!res.ok) {
