@@ -66,50 +66,46 @@ export async function getTriliumConfig(): Promise<TriliumConfig | null> {
   };
 }
 
-function htmlEscape(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
 function renderCatalogNote(item: CatalogItemForSync): string {
   const assetList =
     item.assets.length === 0
-      ? "<li>No assets attached.</li>"
+      ? "- No assets attached."
       : item.assets
           .map((asset) => {
-            const url = asset.storageUrl;
             const label = `${asset.filename} (${asset.contentType}, ${Math.round(asset.sizeBytes / 1024)} KB)`;
-            return url
-              ? `<li><a href="${htmlEscape(url)}">${htmlEscape(label)}</a></li>`
-              : `<li>${htmlEscape(label)}</li>`;
+            return asset.storageUrl
+              ? `- [${label}](${asset.storageUrl})`
+              : `- ${label}`;
           })
-          .join("");
+          .join("\n");
   const transcript = item.processing?.transcript
-    ? `<h3>Transcript</h3><p>${htmlEscape(item.processing.transcript)}</p>`
+    ? `\n### Transcript\n\n${item.processing.transcript}`
     : "";
   const extractedText = item.processing?.extractedText
-    ? `<h3>Extracted text</h3><p>${htmlEscape(item.processing.extractedText)}</p>`
+    ? `\n### Extracted text\n\n${item.processing.extractedText}`
     : "";
   return [
-    `<h2>${htmlEscape(item.title)}</h2>`,
-    `<p>${htmlEscape(item.summary)}</p>`,
-    "<h3>Catalog metadata</h3>",
-    "<ul>",
-    `<li>Catalog id: ${htmlEscape(item.itemId)}</li>`,
-    `<li>Modality: ${htmlEscape(item.modality)}</li>`,
-    `<li>Source: ${htmlEscape(item.source)}</li>`,
-    `<li>Status: ${htmlEscape(item.status)}</li>`,
-    `<li>Tags: ${htmlEscape(item.tags.join(", ") || "none")}</li>`,
-    `<li>Processing model: ${htmlEscape(item.processing?.model ?? "unknown")}</li>`,
-    "</ul>",
-    "<h3>Assets</h3>",
-    `<ul>${assetList}</ul>`,
+    `## ${item.title}`,
+    "",
+    item.summary,
+    "",
+    "### Catalog metadata",
+    "",
+    `- Catalog id: ${item.itemId}`,
+    `- Modality: ${item.modality}`,
+    `- Source: ${item.source}`,
+    `- Status: ${item.status}`,
+    `- Tags: ${item.tags.join(", ") || "none"}`,
+    `- Processing model: ${item.processing?.model ?? "unknown"}`,
+    "",
+    "### Assets",
+    "",
+    assetList,
     transcript,
     extractedText,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 async function triliumFetch(
@@ -130,7 +126,7 @@ async function createNote(config: TriliumConfig, item: CatalogItemForSync): Prom
   const body = {
     parentNoteId: config.rootNoteId ?? "root",
     title: item.title,
-    type: "text",
+    type: "markdown",
     content: renderCatalogNote(item),
   };
   const res = await triliumFetch(config, "/etapi/create-note", {
@@ -154,7 +150,7 @@ async function updateNoteContent(
 ): Promise<void> {
   const res = await triliumFetch(config, `/etapi/notes/${encodeURIComponent(noteId)}/content`, {
     method: "PUT",
-    headers: { "Content-Type": "text/html" },
+    headers: { "Content-Type": "text/markdown" },
     body: renderCatalogNote(item),
   });
   if (!res.ok) {

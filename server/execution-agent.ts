@@ -11,6 +11,7 @@ import { createDraftStagingMcp } from "./draft-tools.js";
 import { createNotesMcp } from "./notes-tools.js";
 import { aggregateUsageFromResult, EMPTY_USAGE, type UsageTotals } from "./usage.js";
 import { getRuntimeModel, getRuntimeReasoningLevel } from "./runtime-config.js";
+import { createSshMcp, isSshConfigured } from "./ssh-tools.js";
 
 const running = new Map<string, AbortController>();
 
@@ -211,10 +212,13 @@ export async function spawnExecutionAgent(opts: SpawnOptions): Promise<SpawnResu
     ? createDraftStagingMcp(opts.conversationId)
     : undefined;
   const notesServer = createNotesMcp(opts.conversationId);
+  const sshConfigured = await isSshConfigured();
+  const sshServer = sshConfigured ? createSshMcp() : undefined;
   const mcpServers = {
     ...integrationServers,
     ...(draftServer ? { "boop-drafts": draftServer } : {}),
     "boop-notes": notesServer,
+    ...(sshServer ? { "boop-ssh": sshServer } : {}),
   };
   const allowedTools = [
     "WebSearch",
