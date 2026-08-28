@@ -11,7 +11,8 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_conversation", ["conversationId"])
-    .index("by_conversation_turn", ["conversationId", "turnId"]),
+    .index("by_conversation_turn", ["conversationId", "turnId"])
+    .index("by_created_at", ["createdAt"]),
 
   conversations: defineTable({
     conversationId: v.string(),
@@ -85,7 +86,8 @@ export default defineSchema({
   })
     .index("by_agent_id", ["agentId"])
     .index("by_status", ["status"])
-    .index("by_conversation", ["conversationId"]),
+    .index("by_conversation", ["conversationId"])
+    .index("by_started_at", ["startedAt"]),
 
   // Append-only LLM usage log. Every model call (dispatcher, execution,
   // extract, consolidation) writes a row here so you can query total cost
@@ -235,7 +237,8 @@ export default defineSchema({
     completedAt: v.optional(v.number()),
   })
     .index("by_automation", ["automationId"])
-    .index("by_run_id", ["runId"]),
+    .index("by_run_id", ["runId"])
+    .index("by_started_at", ["startedAt"]),
 
   catalogItems: defineTable({
     itemId: v.string(),

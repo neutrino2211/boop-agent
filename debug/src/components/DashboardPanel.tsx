@@ -36,6 +36,13 @@ function cutoffDate(range: TimeRange): string | null {
   return new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 }
 
+function rangeDays(range: TimeRange): number | undefined {
+  if (range === "7d") return 7;
+  if (range === "30d") return 30;
+  if (range === "90d") return 90;
+  return undefined;
+}
+
 function fmt(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
@@ -54,10 +61,10 @@ function fmtMoney(value: number | null | undefined, digits = 2): string {
 }
 
 export function DashboardPanel({ isDark }: { isDark: boolean }) {
-  const data = useQuery(api.dashboard.metrics, {});
+  const [range, setRange] = useState<TimeRange>("all");
+  const data = useQuery(api.dashboard.metrics, rangeDays(range) ? { days: rangeDays(range)! } : {});
   const catalogMetrics = useQuery(api.catalog.metrics, {});
   const usageSummary = useQuery(api.usageRecords.summary, { limit: 5000 });
-  const [range, setRange] = useState<TimeRange>("all");
   const [openRouterUsage, setOpenRouterUsage] = useState<OpenRouterUsage | null>(null);
   const [openRouterLoading, setOpenRouterLoading] = useState(true);
 
