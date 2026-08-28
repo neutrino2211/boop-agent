@@ -1,4 +1,5 @@
 import { query } from "./_generated/server";
+import { v } from "convex/values";
 
 // Cap per-table scans so a long-lived install doesn't hit Convex's 16,384
 // .collect() ceiling and break the dashboard. Metrics reflect the most
@@ -6,23 +7,82 @@ import { query } from "./_generated/server";
 const METRICS_SCAN_LIMIT = 5000;
 
 export const metrics = query({
-  args: {},
-  handler: async (ctx) => {
+  args: {
+    // Optional server-side time window. When provided the query reads only
+    // rows whose time field falls in the window via an index range scan,
+    // dramatically reducing bytes read for 7d/30d views vs always scanning
+    // the last 5k rows and filtering client-side. Undefined => all time
+    // (back-compat).
+    days: v.optional(v.number()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = Math.min(args.limit ?? METRICS_SCAN_LIMIT, METRICS_SCAN_LIMIT);
+    const cutoffTs =
+      args.days != null && args.days > 0 ? Date.now() - args.days * 86_400_000 : null;
+
+    // Indexed fetches: each table uses a time or lifecycle index so Convex
+    // can do a range scan instead of a full table scan + JS filter.
+    // `Promise.all` keeps the four scans concurrent as before.
     const [messages, memories, agents, automationRuns] = await Promise.all([
-      ctx.db.query("messages").order("desc").take(METRICS_SCAN_LIMIT),
-      ctx.db.query("memoryRecords").order("desc").take(METRICS_SCAN_LIMIT),
-      ctx.db.query("executionAgents").order("desc").take(METRICS_SCAN_LIMIT),
-      ctx.db.query("automationRuns").order("desc").take(METRICS_SCAN_LIMIT),
+      // Messages & memories are global counters (not time-windowed in the UI)
+      // so they always scan the most recent `limit` rows regardless of `days`.
+      // Agents / automationRuns are windowed when `days` is supplied.
+      ctx.db.query("messages").withIndex("by_created_at").order("desc").take(limit),
+
+      // Previous version scanned *all* memories (active+archived+pruned) then
+      // filtered to `lifecycle === "active"` in JS. Now the index does the
+      // filtering server-side. This is the biggest bytes-read win when many
+      // memories have been pruned/archived and when embeddings (1024 dims) are
+      // stored — large vector fields are no longer read for rows we would
+      // discard anyway. Tier counts derived in a single pass below.
+      ctx.db.query("memoryRecords").withIndex("by_lifecycle", (q) => q.eq("lifecycle", "active")).take(limit),
+
+      // Agents: bucketed by `startedAt` but previously ordered by _creationTime.
+      // With `by_started_at` we can both (a) order by the field we actually
+      // aggregate on and (b) push the cutoff into the index when a window is
+      // selected.
+      cutoffTs !== null
+        ? ctx.db
+            .query("executionAgents")
+            .withIndex("by_started_at", (q) => q.gte("startedAt", cutoffTs))
+            .order("desc")
+            .take(limit)
+        : ctx.db.query("executionAgents").withIndex("by_started_at").order("desc").take(limit),
+
+      cutoffTs !== null
+        ? ctx.db
+            .query("automationRuns")
+            .withIndex("by_started_at", (q) => q.gte("startedAt", cutoffTs))
+            .order("desc")
+            .take(limit)
+        : ctx.db.query("automationRuns").withIndex("by_started_at").order("desc").take(limit),
     ]);
+
     const truncated =
-      messages.length === METRICS_SCAN_LIMIT ||
-      memories.length === METRICS_SCAN_LIMIT ||
-      agents.length === METRICS_SCAN_LIMIT ||
-      automationRuns.length === METRICS_SCAN_LIMIT;
+      messages.length === limit ||
+      memories.length === limit ||
+      agents.length === limit ||
+      automationRuns.length === limit;
 
-    const activeMem = memories.filter((m) => m.lifecycle === "active");
+    // --- Single-pass aggregations (replaces 10+ Array.filter/reduce passes) ---
+    let memShort = 0;
+    let memLong = 0;
+    let memPermanent = 0;
+    for (const m of memories) {
+      if (m.tier === "short") memShort++;
+      else if (m.tier === "long") memLong++;
+      else if (m.tier === "permanent") memPermanent++;
+    }
 
-    // Build daily buckets across all time so the chart has something to draw.
+    let agentsCompleted = 0;
+    let agentsFailed = 0;
+    let agentsCancelled = 0;
+    let agentsRunning = 0;
+    let costTotal = 0;
+    let inputTotal = 0;
+    let outputTotal = 0;
+
     const buckets = new Map<
       string,
       {
@@ -61,6 +121,14 @@ export const metrics = query({
     }
 
     for (const a of agents) {
+      costTotal += a.costUsd ?? 0;
+      inputTotal += a.inputTokens ?? 0;
+      outputTotal += a.outputTokens ?? 0;
+      if (a.status === "completed") agentsCompleted++;
+      else if (a.status === "failed") agentsFailed++;
+      else if (a.status === "cancelled") agentsCancelled++;
+      else if (a.status === "running" || a.status === "spawned") agentsRunning++;
+
       const b = bucketFor(keyFor(a.startedAt));
       b.agentsSpawned += 1;
       b.agentCost += a.costUsd ?? 0;
@@ -80,30 +148,23 @@ export const metrics = query({
     return {
       messages: messages.length,
       memories: {
-        total: activeMem.length,
-        shortTerm: activeMem.filter((m) => m.tier === "short").length,
-        longTerm: activeMem.filter((m) => m.tier === "long").length,
-        permanent: activeMem.filter((m) => m.tier === "permanent").length,
+        total: memories.length,
+        shortTerm: memShort,
+        longTerm: memLong,
+        permanent: memPermanent,
       },
       agents: {
         total: agents.length,
-        completed: agents.filter((a) => a.status === "completed").length,
-        failed: agents.filter((a) => a.status === "failed").length,
-        cancelled: agents.filter((a) => a.status === "cancelled").length,
-        running: agents.filter(
-          (a) => a.status === "running" || a.status === "spawned",
-        ).length,
+        completed: agentsCompleted,
+        failed: agentsFailed,
+        cancelled: agentsCancelled,
+        running: agentsRunning,
       },
-      cost: {
-        total: agents.reduce((s, a) => s + (a.costUsd ?? 0), 0),
-      },
-      tokens: {
-        input: agents.reduce((s, a) => s + (a.inputTokens ?? 0), 0),
-        output: agents.reduce((s, a) => s + (a.outputTokens ?? 0), 0),
-      },
+      cost: { total: costTotal },
+      tokens: { input: inputTotal, output: outputTotal },
       dailyBuckets,
       truncated,
-      scanLimit: METRICS_SCAN_LIMIT,
+      scanLimit: limit,
     };
   },
 });
