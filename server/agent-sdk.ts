@@ -4,7 +4,7 @@ import { z, type ZodRawShape, type ZodTypeAny } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { promises as fs } from "node:fs";
 import { join, resolve } from "node:path";
-import { resolveModelRef } from "./model-config.js";
+import { resolveModelRef, piModels } from "./model-config.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -511,6 +511,7 @@ export async function* query(params: QueryParams): AsyncGenerator<SDKMessage> {
   }
 
   const agent = new Agent({
+    streamFn: piModels.streamSimple.bind(piModels),
     initialState: {
       systemPrompt: options.systemPrompt ?? "",
       model,
