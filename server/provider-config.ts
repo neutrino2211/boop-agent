@@ -1,4 +1,4 @@
-import { getModels, type KnownProvider } from "@earendil-works/pi-ai";
+import { piModels } from "./model-config.js";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { resolveReasoningInput, type RuntimeReasoningLevel } from "./runtime-config.js";
@@ -273,7 +273,7 @@ export async function getProviderConfigSnapshot(): Promise<ProviderConfigSnapsho
   >;
 
   const providers = PROVIDER_META.map((meta) => {
-    const recommendedModel = getModels(meta.provider as KnownProvider)[0]?.id ?? null;
+    const recommendedModel = piModels.getModels(meta.provider)[0]?.id ?? null;
     const configured = meta.requiredEnv.every((envKey) => {
       const value = effectiveEnvValue(envKey, envOverrides[envKey]);
       if (!value || isPlaceholder(value)) return false;

@@ -1,14 +1,11 @@
-import {
-  getEnvApiKey,
-  getModels,
-  getProviders,
-  type KnownProvider,
-  type Model,
-} from "@earendil-works/pi-ai";
+import type { KnownProvider, Model } from "@earendil-works/pi-ai";
+import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+
+export const piModels = builtinModels();
 
 export const DEFAULT_MODEL = "anthropic/claude-sonnet-4-6";
 
-const PROVIDERS = new Set<string>(getProviders());
+const PROVIDERS = new Set<string>(piModels.getProviders().map((p) => p.id));
 
 // Friendly aliases users can text via set_model.
 export const MODEL_ALIASES: Record<string, string> = {
@@ -61,8 +58,8 @@ function hasProviderPrefix(input: string): boolean {
 
 function canonicalizeWithProvider(provider: string, modelId: string): string | null {
   if (!PROVIDERS.has(provider)) return null;
-  const models = getModels(provider as KnownProvider);
-  const found = models.find((m) => m.id.toLowerCase() === modelId.toLowerCase());
+  const providerModels = piModels.getModels(provider);
+  const found = providerModels.find((m) => m.id.toLowerCase() === modelId.toLowerCase());
   return found ? `${provider}/${found.id}` : null;
 }
 
@@ -117,9 +114,36 @@ function hasPlaceholderToken(v: string | undefined): boolean {
   return Boolean(v && /<[^>]+>/.test(v));
 }
 
+function providerHasKey(provider: string): boolean {
+  const envMap: Record<string, string | undefined> = {
+    anthropic: process.env.ANTHROPIC_API_KEY,
+    "azure-openai-responses": process.env.AZURE_OPENAI_API_KEY,
+    openai: process.env.OPENAI_API_KEY,
+    openrouter: process.env.OPENROUTER_API_KEY,
+    deepseek: process.env.DEEPSEEK_API_KEY,
+    groq: process.env.GROQ_API_KEY,
+    xai: process.env.XAI_API_KEY,
+    cerebras: process.env.CEREBRAS_API_KEY,
+    fireworks: process.env.FIREWORKS_API_KEY,
+    mistral: process.env.MISTRAL_API_KEY,
+    minimax: process.env.MINIMAX_API_KEY,
+    "minimax-cn": process.env.MINIMAX_CN_API_KEY,
+    moonshotai: process.env.MOONSHOT_API_KEY,
+    "moonshotai-cn": process.env.MOONSHOT_API_KEY,
+    opencode: process.env.OPENCODE_API_KEY,
+    "opencode-go": process.env.OPENCODE_API_KEY,
+    "kimi-coding": process.env.KIMI_API_KEY,
+    huggingface: process.env.HF_TOKEN,
+    zai: process.env.ZAI_API_KEY,
+    "vercel-ai-gateway": process.env.AI_GATEWAY_API_KEY,
+    "cloudflare-workers-ai": process.env.CLOUDFLARE_API_KEY,
+    "cloudflare-ai-gateway": process.env.CLOUDFLARE_API_KEY,
+  };
+  return Boolean(envMap[provider]);
+}
+
 function providerStatus(provider: string): ProviderStatus {
-  const apiKey = getEnvApiKey(provider as KnownProvider);
-  if (!apiKey) {
+  if (!providerHasKey(provider)) {
     if (provider === "anthropic") {
       return { ok: false, reason: "missing ANTHROPIC_API_KEY (or ANTHROPIC_OAUTH_TOKEN)" };
     }
@@ -184,14 +208,14 @@ export function normalizeModelOrDefault(input: string | undefined): string {
 export function resolveModelRef(input: string | undefined): { ref: string; model: Model<any> } {
   const ref = normalizeModelOrDefault(input);
   const slash = ref.indexOf("/");
-  const provider = ref.slice(0, slash) as KnownProvider;
+  const provider = ref.slice(0, slash);
   const modelId = ref.slice(slash + 1);
-  const model = getModels(provider).find((m) => m.id === modelId);
-  if (!model) {
+  const found = piModels.getModels(provider).find((m) => m.id === modelId);
+  if (!found) {
     throw new Error(`Unknown model reference: ${ref}`);
   }
   return {
     ref,
-    model,
+    model: found,
   };
 }

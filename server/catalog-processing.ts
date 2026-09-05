@@ -3,14 +3,14 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { completeSimple, type ImageContent, type TextContent } from "@earendil-works/pi-ai";
+import { type ImageContent, type TextContent } from "@earendil-works/pi-ai";
 import OpenAI, { toFile } from "openai";
 import { api } from "../convex/_generated/api.js";
 import { convex } from "./convex-client.js";
 import { getCatalogModel, type CatalogModality } from "./catalog-models.js";
 import { broadcast } from "./broadcast.js";
 import { detectMediaMetadata } from "./media-detection.js";
-import { resolveModelRef } from "./model-config.js";
+import { resolveModelRef, piModels } from "./model-config.js";
 
 interface CatalogAssetForProcessing {
   filename: string;
@@ -95,7 +95,7 @@ function describeAssets(assets: CatalogAssetForProcessing[]): string {
     .join("; ");
 }
 
-function assistantText(content: Awaited<ReturnType<typeof completeSimple>>["content"]): string {
+function assistantText(content: Awaited<ReturnType<typeof piModels.completeSimple>>["content"]): string {
   return content
     .filter((block): block is TextContent => block.type === "text")
     .map((block) => block.text)
@@ -564,7 +564,7 @@ async function analyzeWithPi(args: {
     images.length > 0
       ? ([{ type: "text", text: args.prompt }, ...images] satisfies (TextContent | ImageContent)[])
       : args.prompt;
-  const response = await completeSimple(
+  const response = await piModels.completeSimple(
     model,
     {
       systemPrompt: ANALYSIS_SYSTEM_PROMPT,
