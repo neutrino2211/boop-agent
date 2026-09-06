@@ -13,6 +13,7 @@ import { createAutomationMcp } from "./automation-tools.js";
 import { createDraftDecisionMcp } from "./draft-tools.js";
 import { createSelfMcp } from "./self-tools.js";
 import { createNotesMcp } from "./notes-tools.js";
+import { createPromptMcp } from "./prompt-tools.js";
   import { getRuntimeModel, getRuntimeReasoningLevel, getRuntimeSplitResponses } from "./runtime-config.js";
 import { broadcast } from "./broadcast.js";
 import { sendImessage } from "./sendblue.js";
@@ -33,6 +34,7 @@ Your only tools:
 - catalog_item / catalog_attachment / search_attachments / search_catalog / update_catalog_item / retry_catalog_processing / sync_to_notes / delete_catalog_item / delete_catalog_trilium_note / delete_trilium_note / list_catalog_models / set_catalog_model (cataloged notes/media via the notes tool)
 - spawn_agent (dispatches a sub-agent that CAN touch the world)
 - create_automation / list_automations / toggle_automation / delete_automation
+- schedule_prompt / list_scheduled_prompts / cancel_scheduled_prompt
 - list_drafts / send_draft / reject_draft
 - get_config / set_model / set_reasoning / set_timezone / list_integrations / search_composio_catalog / inspect_toolkit (self-inspection)
 
@@ -109,11 +111,20 @@ than once — use create_automation with a 5-field cron expression and a
 concrete task description for the sub-agent. Don't just promise to
 remember and do it later; if there's a schedule, there's a cron.
 
+Scheduled prompts (one-shot):
+When the user wants something to happen ONCE at a future time — "remind me
+in 30 minutes", "ping me in 2 hours about X", "check on this later" — use
+schedule_prompt with a delay in minutes. This fires once and disappears.
+Don't use create_automation for one-shot delays.
+
 When the user wants to inspect, change, pause, resume, or remove
 automations they've already set up, use list_automations /
 toggle_automation / delete_automation. Route by intent — the user may
 phrase it as "what's running", "kill the morning thing", "pause that
 weekly digest", etc.
+
+When the user wants to see or cancel pending one-shot prompts, use
+list_scheduled_prompts / cancel_scheduled_prompt.
 
 Drafts:
 External actions (email, calendar event, Slack message, etc.) go through a
@@ -282,6 +293,7 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string[]> {
   const draftDecisionServer = createDraftDecisionMcp(opts.conversationId);
   const selfServer = createSelfMcp();
   const notesServer = createNotesMcp(opts.conversationId);
+  const promptServer = createPromptMcp(opts.conversationId);
 
   const ackServer = createSdkMcpServer({
     name: "boop-ack",
@@ -424,6 +436,7 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string[]> {
           "boop-ack": ackServer,
           "boop-self": selfServer,
           "boop-notes": notesServer,
+          "boop-prompts": promptServer,
         },
         allowedTools: [
           "mcp__boop-memory__write_memory",
@@ -456,6 +469,9 @@ export async function handleUserMessage(opts: HandleOpts): Promise<string[]> {
           "mcp__boop-notes__delete_trilium_note",
           "mcp__boop-notes__list_catalog_models",
           "mcp__boop-notes__set_catalog_model",
+          "mcp__boop-prompts__schedule_prompt",
+          "mcp__boop-prompts__list_scheduled_prompts",
+          "mcp__boop-prompts__cancel_scheduled_prompt",
         ],
         // Belt-and-suspenders: even with bypassPermissions the SDK can leak
         // its built-ins if we only whitelist. Explicitly block them on the

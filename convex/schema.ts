@@ -361,6 +361,27 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_collection_id", ["collectionId"]),
 
+  scheduledPrompts: defineTable({
+    promptId: v.string(),
+    prompt: v.string(),
+    integrations: v.array(v.string()),
+    conversationId: v.optional(v.string()),
+    notifyConversationId: v.optional(v.string()),
+    runAt: v.number(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("failed"),
+    ),
+    result: v.optional(v.string()),
+    error: v.optional(v.string()),
+    agentId: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_prompt_id", ["promptId"])
+    .index("by_status_run_at", ["status", "runAt"]),
+
   catalogEvents: defineTable({
     itemId: v.string(),
     eventType: v.string(),

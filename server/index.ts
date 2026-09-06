@@ -14,6 +14,7 @@ import { startCleanupLoop } from "./memory/clean.js";
 import { startAutomationLoop } from "./automations.js";
 import { startHeartbeatLoop } from "./heartbeat.js";
 import { startConsolidationLoop } from "./consolidation.js";
+import { startScheduledPromptLoop } from "./scheduled-prompts.js";
 import { cancelAgent, retryAgent } from "./execution-agent.js";
 import { createComposioRouter } from "./composio-routes.js";
 import { ensureProactiveWatcher } from "./proactive-email.js";
@@ -91,11 +92,13 @@ async function main() {
   const stopAutomationLoop = startAutomationLoop();
   const stopHeartbeatLoop = startHeartbeatLoop();
   const stopConsolidationLoop = startConsolidationLoop();
+  const stopScheduledPromptLoop = startScheduledPromptLoop();
   const stoppers = [
     stopCleanupLoop,
     stopAutomationLoop,
     stopHeartbeatLoop,
     stopConsolidationLoop,
+    stopScheduledPromptLoop,
   ];
   let integrationsReady = false;
   let integrationsLoading = false;
